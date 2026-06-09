@@ -1,0 +1,1 @@
+# solana-anomapay-erc20-resource
