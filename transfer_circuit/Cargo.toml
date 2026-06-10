@@ -5,10 +5,4 @@ version = "1.0.0"
 
 [dependencies]
 hex = "0.4"
-risc0-zkvm = "3.0.3"
 token-transfer-methods-v2 = { path = "methods" }
-
-[features]
-bonsai = ["risc0-zkvm/bonsai"]
-default = []
-prove = ["risc0-zkvm/prove"]
