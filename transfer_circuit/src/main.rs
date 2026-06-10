@@ -1,9 +1,9 @@
 use std::io::Write;
 
-use token_transfer_methods_v2::{TOKEN_TRANSFER_GUEST_V2_ELF, TOKEN_TRANSFER_GUEST_V2_ID};
+use token_transfer_methods::{TOKEN_TRANSFER_GUEST_ELF, TOKEN_TRANSFER_GUEST_ID};
 
 fn main() {
-    let id_bytes: Vec<u8> = TOKEN_TRANSFER_GUEST_V2_ID
+    let id_bytes: Vec<u8> = TOKEN_TRANSFER_GUEST_ID
         .iter()
         .flat_map(|word| word.to_le_bytes())
         .collect();
@@ -14,11 +14,11 @@ fn main() {
         let path = args
             .get(2)
             .expect("Usage: transfer-circuit --dump-elf <output-path>");
-        std::fs::write(path, TOKEN_TRANSFER_GUEST_V2_ELF)
+        std::fs::write(path, TOKEN_TRANSFER_GUEST_ELF)
             .unwrap_or_else(|e| panic!("Failed to write ELF to {path}: {e}"));
         eprintln!(
             "Wrote {} bytes to {path}",
-            TOKEN_TRANSFER_GUEST_V2_ELF.len()
+            TOKEN_TRANSFER_GUEST_ELF.len()
         );
     }
 
@@ -27,7 +27,7 @@ fn main() {
     writeln!(
         stdout,
         "ELF size: {} bytes",
-        TOKEN_TRANSFER_GUEST_V2_ELF.len()
+        TOKEN_TRANSFER_GUEST_ELF.len()
     )
     .unwrap();
 }

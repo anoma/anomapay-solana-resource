@@ -14,12 +14,12 @@ use transfer_witness::{
 };
 
 /// The binary program that is executed in the zkvm to generate proofs.
-pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-guest-v2.bin");
+pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-guest.bin");
 
 lazy_static! {
     /// The identity of the binary that executes the proofs in the zkvm.
     pub static ref TOKEN_TRANSFER_ID: Digest =
-        Digest::from_hex("9bda007dd983c27f733663dc3c84a49e14dcf5a6d65958494f51ccb77fd8ed84")
+        Digest::from_hex("900df4f9d842b092b980e2d1c1d8d99af5813744d5a04aafcbde61da0b100f51")
             .unwrap();
 }
 

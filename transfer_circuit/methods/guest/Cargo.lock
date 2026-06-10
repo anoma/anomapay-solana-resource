@@ -2717,7 +2717,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "token-transfer-guest-v2"
+name = "token-transfer-guest"
 version = "1.0.0"
 dependencies = [
  "borsh",

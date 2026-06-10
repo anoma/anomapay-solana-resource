@@ -1574,7 +1574,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "token-transfer-methods-v2"
+name = "token-transfer-methods"
 version = "1.0.0"
 dependencies = [
  "risc0-build",
@@ -1688,7 +1688,7 @@ name = "transfer-circuit"
 version = "1.0.0"
 dependencies = [
  "hex",
- "token-transfer-methods-v2",
+ "token-transfer-methods",
 ]
 
 [[package]]
