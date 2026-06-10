@@ -16,18 +16,10 @@ fn main() {
             .expect("Usage: transfer-circuit --dump-elf <output-path>");
         std::fs::write(path, TOKEN_TRANSFER_GUEST_ELF)
             .unwrap_or_else(|e| panic!("Failed to write ELF to {path}: {e}"));
-        eprintln!(
-            "Wrote {} bytes to {path}",
-            TOKEN_TRANSFER_GUEST_ELF.len()
-        );
+        eprintln!("Wrote {} bytes to {path}", TOKEN_TRANSFER_GUEST_ELF.len());
     }
 
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "Image ID (hex): {}", hex::encode(&id_bytes)).unwrap();
-    writeln!(
-        stdout,
-        "ELF size: {} bytes",
-        TOKEN_TRANSFER_GUEST_ELF.len()
-    )
-    .unwrap();
+    writeln!(stdout, "ELF size: {} bytes", TOKEN_TRANSFER_GUEST_ELF.len()).unwrap();
 }

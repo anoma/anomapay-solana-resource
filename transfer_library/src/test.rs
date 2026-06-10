@@ -408,7 +408,10 @@ fn test_negative_persistent_resource_consumption_with_invalid_value_info() {
         .as_mut()
         .unwrap()
         .auth_pk = wrong_auth_pk;
-    assert_prove_failed_with(&resource_logic_with_wrong_auth_pk, "InvalidResourceValueRef");
+    assert_prove_failed_with(
+        &resource_logic_with_wrong_auth_pk,
+        "InvalidResourceValueRef",
+    );
 
     // Wrong encryption_pk in value_info
     let mut resource_logic_with_wrong_encryption_pk = resource_logic.clone();
@@ -514,7 +517,10 @@ fn test_negative_persistent_resource_creation_with_missing_info() {
     resource_logic_with_missing_encryption_info
         .witness
         .encryption_info = None;
-    assert_prove_failed_with(&resource_logic_with_missing_encryption_info, "Encryption info");
+    assert_prove_failed_with(
+        &resource_logic_with_missing_encryption_info,
+        "Encryption info",
+    );
 }
 
 #[test]
@@ -542,7 +548,10 @@ fn test_negative_persistent_resource_creation_with_invalid_label_info() {
         .as_mut()
         .unwrap()
         .spl_token_mint[0] ^= 0xFF;
-    assert_prove_failed_with(&resource_logic_with_wrong_mint, "Invalid resource label_ref");
+    assert_prove_failed_with(
+        &resource_logic_with_wrong_mint,
+        "Invalid resource label_ref",
+    );
 }
 
 #[test]
@@ -559,7 +568,10 @@ fn test_negative_persistent_resource_creation_with_invalid_value_info() {
         .as_mut()
         .unwrap()
         .auth_pk = wrong_auth_pk;
-    assert_prove_failed_with(&resource_logic_with_wrong_auth_pk, "InvalidResourceValueRef");
+    assert_prove_failed_with(
+        &resource_logic_with_wrong_auth_pk,
+        "InvalidResourceValueRef",
+    );
 
     // Wrong encryption_pk in value_info
     let mut resource_logic_with_wrong_encryption_pk = resource_logic.clone();

@@ -515,25 +515,27 @@ mod tests {
         let spl_token_mint = [0x22; 32];
         let solana_account = [0x33; 32];
 
-        let mut witness = TokenTransferWitness::default();
-        witness.is_consumed = true;
+        let mut witness = TokenTransferWitness {
+            is_consumed: true,
+            forwarder_info: Some(ForwarderInfo {
+                call_type: CallType::Wrap,
+                solana_account: Some(solana_account),
+                wrap_auth_info: Some(WrapAuthInfo {
+                    nonce: 7,
+                    deadline: 1_800_000_000,
+                    ed25519_signature: [0x44; 64],
+                    ed25519_ix_index: 0,
+                }),
+            }),
+            label_info: Some(LabelInfo {
+                forwarder_program_id,
+                spl_token_mint,
+            }),
+            ..Default::default()
+        };
         witness.resource.quantity = quantity;
         witness.resource.is_ephemeral = true;
         witness.resource.label_ref = calculate_label_ref(&forwarder_program_id, &spl_token_mint);
-        witness.forwarder_info = Some(ForwarderInfo {
-            call_type: CallType::Wrap,
-            solana_account: Some(solana_account),
-            wrap_auth_info: Some(WrapAuthInfo {
-                nonce: 7,
-                deadline: 1_800_000_000,
-                ed25519_signature: [0x44; 64],
-                ed25519_ix_index: 0,
-            }),
-        });
-        witness.label_info = Some(LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        });
         witness
     }
 
@@ -542,21 +544,23 @@ mod tests {
         let spl_token_mint = [0x66; 32];
         let recipient = [0x77; 32];
 
-        let mut witness = TokenTransferWitness::default();
-        witness.is_consumed = false;
+        let mut witness = TokenTransferWitness {
+            is_consumed: false,
+            forwarder_info: Some(ForwarderInfo {
+                call_type: CallType::Unwrap,
+                solana_account: Some(recipient),
+                wrap_auth_info: None,
+            }),
+            label_info: Some(LabelInfo {
+                forwarder_program_id,
+                spl_token_mint,
+            }),
+            ..Default::default()
+        };
         witness.resource.quantity = quantity;
         witness.resource.is_ephemeral = true;
         witness.resource.label_ref = calculate_label_ref(&forwarder_program_id, &spl_token_mint);
         witness.resource.value_ref = calculate_value_ref_from_solana_account(&recipient);
-        witness.forwarder_info = Some(ForwarderInfo {
-            call_type: CallType::Unwrap,
-            solana_account: Some(recipient),
-            wrap_auth_info: None,
-        });
-        witness.label_info = Some(LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        });
         witness
     }
 
@@ -566,7 +570,7 @@ mod tests {
             .expect("configured ephemeral witness should emit an external call");
         assert_eq!(external_payload.len(), 1);
 
-        SolanaExternalCall::decode(&words_to_bytes(&external_payload[0].blob))
+        SolanaExternalCall::decode(words_to_bytes(&external_payload[0].blob))
             .expect("external-call blob should decode")
     }
 
