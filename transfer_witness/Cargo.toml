@@ -7,7 +7,6 @@ readme.workspace = true
 version.workspace = true
 
 [dependencies]
-anoma-pa-solana-client = { workspace = true }
 anoma-rm-risc0 = { workspace = true, default-features = false }
 anoma-rm-risc0-gadgets = { workspace = true }
 bincode = { workspace = true }
