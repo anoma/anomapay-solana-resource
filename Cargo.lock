@@ -4807,6 +4807,7 @@ version = "2.0.0"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
+ "bincode",
  "hex",
  "k256",
  "lazy_static",

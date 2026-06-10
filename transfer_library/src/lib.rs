@@ -1,6 +1,9 @@
 //! The transfer library contains the definition of the resource logics for the simple transfer
 //! application.
 
+#[cfg(test)]
+mod test;
+
 use anoma_rm_risc0::{Digest, logic_proof::LogicProver, resource::Resource};
 use anoma_rm_risc0_gadgets::authority::{AuthoritySignature, AuthorityVerifyingKey};
 use hex::FromHex;

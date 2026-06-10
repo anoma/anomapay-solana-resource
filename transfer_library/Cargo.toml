@@ -21,3 +21,6 @@ k256 = { workspace = true, features = [
 lazy_static = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 transfer_witness = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true }
