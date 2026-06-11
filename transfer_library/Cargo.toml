@@ -1,9 +1,10 @@
 [package]
 authors.workspace = true
+description = "Host-side proving API for the AnomaPay Solana token-transfer resource."
 edition.workspace = true
 license.workspace = true
 name = "transfer_library"
-readme.workspace = true
+readme = "README.md"
 version.workspace = true
 
 [dependencies]

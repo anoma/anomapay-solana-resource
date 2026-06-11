@@ -1,9 +1,10 @@
 [package]
 authors.workspace = true
+description = "Witness data and resource-logic constraints for the AnomaPay Solana token-transfer resource."
 edition.workspace = true
 license.workspace = true
 name = "transfer_witness"
-readme.workspace = true
+readme = "README.md"
 version.workspace = true
 
 [dependencies]

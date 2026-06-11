@@ -44,10 +44,11 @@ transfer_witness ──► transfer_library ──► transfer_circuit
 ### `transfer_witness`
 Defines `TokenTransferWitness`: the full set of inputs needed to prove the
 resource logic of a single consumed or created resource (the resource itself,
-nullifier key, authorization signature, encryption info, forwarder/permit data,
-label and value info). Implements the ARM `LogicCircuit` constraint function that
-the guest executes, including the wrap/unwrap external-call encoding for the SPL
-token forwarder.
+nullifier key, authorization signature, encryption info, forwarder/wrap-auth
+data, label and value info). Implements the ARM `LogicCircuit` constraint
+function that the guest executes, including the wrap/unwrap external-call
+encoding for the SPL token forwarder. Wrapping is authorized by an Ed25519
+signature (`WrapAuthInfo`).
 
 ### `transfer_library`
 Host-side proving API. `TransferLogic` wraps `TokenTransferWitness` with
@@ -60,8 +61,7 @@ verifying-key rollback/migration record.
 ### `transfer_circuit`
 The RISC Zero guest program and its `methods` build crate. The guest reads a
 `TokenTransferWitness`, runs `constrain()`, and commits the resulting
-`LogicInstance`. The `--dump-elf` binary re-exports the built guest ELF that
-`transfer_library` embeds.
+`LogicInstance`.
 
 ## Building
 
@@ -70,8 +70,18 @@ The host workspace builds with a stable toolchain (see
 
 ```
 cargo build
-cargo test
 ```
 
 Rebuilding the guest requires the [RISC Zero toolchain](https://dev.risczero.com)
 and is done from the excluded `transfer_circuit` workspace.
+
+## Testing
+
+The circuit tests live in `transfer_library` (`src/test.rs`) and prove against
+the embedded guest ELF, so they exercise the real resource logic without
+rebuilding the guest. Full STARK proving is slow; set `RISC0_DEV_MODE=1` to run
+them with fast (non-cryptographic) proofs:
+
+```
+RISC0_DEV_MODE=1 cargo test --workspace
+```

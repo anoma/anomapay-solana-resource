@@ -4803,7 +4803,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "2.0.0"
+version = "1.0.0"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
@@ -4817,7 +4817,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0"
+version = "1.0.0"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
