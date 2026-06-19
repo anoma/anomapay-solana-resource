@@ -11,6 +11,15 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  vk-history:
+    name: Verify TOKEN_TRANSFER_ID is documented in VK_HISTORY.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check VK history
+        run: ./scripts/check-vk-history.sh
+
   fmt:
     name: Format checks
     runs-on: ubuntu-latest
