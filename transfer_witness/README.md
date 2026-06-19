@@ -31,12 +31,18 @@ resource kind and produces a `LogicInstance`:
 `EncryptionInfo`, `ForwarderInfo`, `LabelInfo`, `ValueInfo`, `WrapAuthInfo`,
 `ResourceWithLabel`, and `CallType` (`Wrap` / `Unwrap`).
 
-### `external_call` module
-Wire-level types and helpers for the protocol adapter's external-call subsystem:
-`SolanaExternalCall` / `OutputMode` (bincode `encode`/`decode`), the forwarder op
-codes `OP_WRAP` / `OP_UNWRAP`, and the instruction-data encoders
-`encode_wrap_forwarder_input` (186 bytes) and `encode_unwrap_forwarder_input`
-(73 bytes). `call_type` re-exports the op codes and encoders for existing callers.
+### External-call types (re-exported)
+Wire-level types and helpers for the protocol adapter's external-call subsystem
+come from [`anoma-pa-solana-client`](https://github.com/anoma/anoma-pa-solana-client)'s
+`external_call` module and are re-exported here: `SolanaExternalCall` / `OutputMode`
+(bincode `encode`/`decode`), the forwarder op codes `OP_WRAP` / `OP_UNWRAP`, and the
+instruction-data encoders `encode_wrap_forwarder_input` (186 bytes) and
+`encode_unwrap_forwarder_input` (73 bytes). `call_type` also re-exports the op codes
+and encoders for existing callers.
+
+The dependency is taken with `default-features = false`: that drops the crate's
+`solana-program` / `anchor-lang` stack — which can't cross-compile to the RISC Zero
+guest target — so only the dep-free `external_call` module is compiled into the guest.
 
 ### Reference helpers
 `calculate_label_ref` (forwarder program id + SPL mint), `calculate_persistent_value_ref`
@@ -46,7 +52,9 @@ codes `OP_WRAP` / `OP_UNWRAP`, and the instruction-data encoders
 ## Notes
 
 - These shapes must match the protocol adapter byte-for-byte: the external-call
-  blob is serialized off-chain and read on-chain by the same definitions.
+  blob is serialized off-chain and read on-chain by the same definitions. They
+  live in `anoma-pa-solana-client` so both sides share a single source of truth.
 - Unit tests for the forwarder encoders and external-call round-trips live in
-  this crate. End-to-end proving tests live in
+  `anoma-pa-solana-client`. This crate's tests cover the witness's external-call
+  emission and the `u64::MAX` quantity bounds; end-to-end proving tests live in
   [`transfer_library`](../transfer_library).

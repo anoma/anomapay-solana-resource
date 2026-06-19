@@ -2,7 +2,6 @@
 //! simple transfer resources in the Anoma Pay application.
 //!
 pub mod call_type;
-pub mod external_call;
 
 use crate::call_type::{CallType, encode_unwrap_forwarder_input, encode_wrap_forwarder_input};
 pub use anoma_rm_risc0::resource_logic::LogicCircuit;
@@ -416,10 +415,10 @@ impl LogicCircuit for TokenTransferWitness {
     }
 }
 
-// `SolanaExternalCall` and `OutputMode` live in the local [`external_call`] module.
+// `SolanaExternalCall` and `OutputMode` are owned by `anoma-pa-solana-client`.
 // Re-exported here so existing callers using `transfer_witness::SolanaExternalCall`
 // keep compiling.
-pub use crate::external_call::{OutputMode, SolanaExternalCall};
+pub use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 
 /// Calculate the value ref based on an authorization key and an encryption key for a given user.
 pub fn calculate_persistent_value_ref(value: &ValueInfo) -> Digest {
