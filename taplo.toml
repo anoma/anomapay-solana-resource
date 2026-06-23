@@ -1,0 +1,11 @@
+include = [
+    "Cargo.toml",
+    "transfer_witness/Cargo.toml",
+    "transfer_library/Cargo.toml",
+    "transfer_circuit/Cargo.toml",
+    "transfer_circuit/methods/Cargo.toml",
+    "transfer_circuit/methods/guest/Cargo.toml"
+]
+
+[formatting]
+reorder_keys = true

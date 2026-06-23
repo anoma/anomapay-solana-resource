@@ -1,0 +1,18 @@
+[package]
+authors.workspace = true
+description = "Witness data and resource-logic constraints for the AnomaPay Solana token-transfer resource."
+edition.workspace = true
+license.workspace = true
+name = "transfer_witness"
+readme = "README.md"
+version.workspace = true
+
+[dependencies]
+anoma-pa-solana-client = { workspace = true }
+anoma-rm-risc0 = { workspace = true, default-features = false }
+anoma-rm-risc0-gadgets = { workspace = true }
+bincode = { workspace = true }
+k256 = { workspace = true, features = ["serde"] }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_with = { workspace = true }

@@ -1,0 +1,27 @@
+[package]
+authors.workspace = true
+description = "Host-side proving API for the AnomaPay Solana token-transfer resource."
+edition.workspace = true
+license.workspace = true
+name = "transfer_library"
+readme = "README.md"
+version.workspace = true
+
+[dependencies]
+anoma-rm-risc0 = { workspace = true, features = ["transaction", "prove"] }
+anoma-rm-risc0-gadgets = { workspace = true }
+hex = { workspace = true }
+k256 = { workspace = true, features = [
+  "arithmetic",
+  "serde",
+  "expose-field",
+  "std",
+  "ecdsa",
+  "hash2curve",
+] }
+lazy_static = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+transfer_witness = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true }

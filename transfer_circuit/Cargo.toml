@@ -1,0 +1,10 @@
+[package]
+description = "RISC Zero guest program for the AnomaPay Solana token-transfer resource."
+edition = "2021"
+name = "transfer-circuit"
+readme = "README.md"
+version = "1.0.0"
+
+[dependencies]
+hex = "0.4"
+token-transfer-methods = { path = "methods" }
