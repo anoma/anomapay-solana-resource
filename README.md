@@ -20,10 +20,18 @@ not share the host workspace's lockfile or profile.
 
 ```
 .
-├── transfer_witness/   # witness data + resource-logic constraints
-├── transfer_library/   # host API: TransferLogic, embedded guest ELF + ImageID
-└── transfer_circuit/   # RISC Zero guest program  (excluded workspace)
+├── transfer_witness/      # witness data + resource-logic constraints
+├── transfer_witness_v2/   # v2 witness: adds migration support
+├── transfer_library/      # host API: TransferLogic, embedded guest ELF + ImageID
+├── transfer_library_v2/   # v2 host API: TransferLogicV2 + migration tx builder
+├── transfer_circuit/      # RISC Zero guest program     (excluded workspace)
+└── transfer_circuit_v2/   # v2 RISC Zero guest program  (excluded workspace)
 ```
+
+The `*_v2` crates mirror their v1 counterparts and add **migration** support for
+moving a v1 resource to v2. They reuse the v1 building blocks directly, so v2 only
+adds what changes: the `Migrate` call type and the migration constraint/forwarder
+call. See [`transfer_witness_v2`](transfer_witness_v2) for details.
 
 ### Dependency graph
 

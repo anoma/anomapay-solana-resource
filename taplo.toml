@@ -1,10 +1,15 @@
 include = [
     "Cargo.toml",
     "transfer_witness/Cargo.toml",
+    "transfer_witness_v2/Cargo.toml",
     "transfer_library/Cargo.toml",
+    "transfer_library_v2/Cargo.toml",
     "transfer_circuit/Cargo.toml",
     "transfer_circuit/methods/Cargo.toml",
-    "transfer_circuit/methods/guest/Cargo.toml"
+    "transfer_circuit/methods/guest/Cargo.toml",
+    "transfer_circuit_v2/Cargo.toml",
+    "transfer_circuit_v2/methods/Cargo.toml",
+    "transfer_circuit_v2/methods/guest/Cargo.toml"
 ]
 
 [formatting]

@@ -1,0 +1,15 @@
+[package]
+authors.workspace = true
+description = "v2 witness data and resource-logic constraints for the AnomaPay Solana transfer resource, adding migration support."
+edition.workspace = true
+license.workspace = true
+name = "transfer_witness_v2"
+readme = "README.md"
+version = "1.0.0"
+
+[dependencies]
+anoma-rm-risc0 = { workspace = true, default-features = false }
+anoma-rm-risc0-gadgets = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+transfer_witness = { workspace = true }
