@@ -8,6 +8,7 @@ readme = "README.md"
 version = "1.0.0"
 
 [dependencies]
+anoma-pa-solana-client = { workspace = true }
 anoma-rm-risc0 = { workspace = true, default-features = false }
 anoma-rm-risc0-gadgets = { workspace = true }
 bincode = { workspace = true }

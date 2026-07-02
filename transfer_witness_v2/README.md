@@ -33,15 +33,18 @@ its `Resource`, nullifier key, a Merkle `path` from the v1 commitment tree
 `ValueInfo`, and the **v1** forwarder program id used in its label.
 
 ### `CallTypeV2` ([`call_type_v2.rs`](src/call_type_v2.rs))
-Adds `Migrate` to `Wrap`/`Unwrap`. `Wrap`/`Unwrap` reuse the v1 op codes and
-encoders owned by `anoma-pa-solana-client`; v2 adds `OP_MIGRATE` and
-`encode_migrate_forwarder_input`, which mirrors the v1 byte-layout convention:
-`op(1) + token_mint(32) + amount_le(8) + nullifier(32) + root_v1(32) +
-logic_ref_v1(32) + forwarder_v1(32)`.
+Adds `Migrate` to `Wrap`/`Unwrap`. All op codes and instruction-data encoders are
+owned by `anoma-pa-solana-client` (so the circuit and the on-chain forwarder
+agree byte-for-byte): `Wrap`/`Unwrap` are re-exported via
+[`transfer_witness::call_type`], and the v2-only `OP_MIGRATE` /
+`encode_migrate_forwarder_input` come from the same client crate. The migrate
+layout is `op(1) + token_mint(32) + amount_le(8) + nullifier(32) + root_v1(32) +
+logic_ref_v1(32) + forwarder_v1(32)` (169 bytes).
 
-> The migrate op byte, instruction-data layout, and
+Only `MIGRATE_FORWARDER_NUM_ACCOUNTS` lives here.
+
 > `MIGRATE_FORWARDER_NUM_ACCOUNTS` must match the migrate instruction of the
-> deployed v2 SPL token forwarder. They are provisional until that program is
+> deployed v2 SPL token forwarder. It is provisional until that program is
 > finalized — revisit before shipping migration to a live network.
 
 ## The migration constraint

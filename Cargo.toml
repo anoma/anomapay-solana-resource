@@ -20,7 +20,7 @@ version = "1.0.0"
 # `default-features = false`: only the dep-free `external_call` wire types are
 # used. Dropping the default `solana-program`/`anchor-lang` features keeps that
 # stack out of the RISC Zero guest, which can't cross-compile it.
-anoma-pa-solana-client = { git = "https://github.com/anoma/anoma-pa-solana-client", rev = "2c42023e6608431f1f0036ff4ffa2a23c5457471", default-features = false }
+anoma-pa-solana-client = { git = "https://github.com/anoma/anoma-pa-solana-client", rev = "937553929595d13c6a49d77552b3ee89b33929a3", default-features = false }
 anoma-rm-risc0 = { git = "https://github.com/anoma/arm-risc0", tag = "solana-v1.2.0", default-features = false }
 anoma-rm-risc0-gadgets = { git = "https://github.com/anoma/arm-risc0", tag = "solana-v1.2.0" }
 bincode = "1.3.3"

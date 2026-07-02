@@ -25,7 +25,7 @@ no `0x` prefix.
 
 | VK | Commit | Date | Reason | Migration plan |
 |---|---|---|---|---|
-| `63eb06506a4596fc5d4359084785e68f54e59a31bd535518038f829f9e164105` | (this commit) | 2026-06-23 | Initial Solana port of the v2 (migration-capable) token-transfer guest, adapted from the ERC20 v2 resource. Local (non-reproducible) build; the resource logic adds the `Migrate` call type on top of the v1 wrap/unwrap logic. | None — not deployed. v2 has never shipped to mainnet, so no resources are minted under this VK and nothing is orphaned. The migration plan must be revisited (including a reproducible docker build of the guest) before this VK ships to a live network. |
+| `93e00f30c272a747fbd48c0938ea71842e88a34db15cebc4fff3f451c320588d` | (this commit) | 2026-06-24 | Initial Solana port of the v2 (migration-capable) token-transfer guest, adapted from the ERC20 v2 resource. The `Migrate` call type is added on top of the v1 wrap/unwrap logic, sourcing `OP_MIGRATE` / `encode_migrate_forwarder_input` from `anoma-pa-solana-client`. Local (non-reproducible) build. (Transient intra-branch values `c9f22b83…`, `e76734b0…`, and `63eb0650…` appeared while iterating on versioning and the encoder source; they never left this branch and are omitted.) | None — not deployed. v2 has never shipped to mainnet, so no resources are minted under this VK and nothing is orphaned. The migration plan must be revisited (including a reproducible docker build of the guest) before this VK ships to a live network. |
 
 ## Process for adding a new VK
 
