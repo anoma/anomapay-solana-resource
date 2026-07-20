@@ -12,13 +12,16 @@ concurrency:
 
 jobs:
   vk-history:
-    name: Verify TOKEN_TRANSFER_ID is documented in VK_HISTORY.md
+    name: Verify TOKEN_TRANSFER_ID(s) are documented in VK_HISTORY.md
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check VK history
+      - name: Check VK history (v1)
         run: ./scripts/check-vk-history.sh
+
+      - name: Check VK history (v2)
+        run: ./scripts/check-vk-history-v2.sh
 
   fmt:
     name: Format checks
@@ -37,6 +40,10 @@ jobs:
 
       - name: cargo fmt (transfer_circuit)
         working-directory: transfer_circuit
+        run: cargo fmt --all --check
+
+      - name: cargo fmt (transfer_circuit_v2)
+        working-directory: transfer_circuit_v2
         run: cargo fmt --all --check
 
       - name: Install taplo
