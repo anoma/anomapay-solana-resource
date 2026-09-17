@@ -228,8 +228,8 @@ dependencies = [
 
 [[package]]
 name = "anoma-pa-solana-client"
-version = "0.2.0"
-source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=937553929595d13c6a49d77552b3ee89b33929a3#937553929595d13c6a49d77552b3ee89b33929a3"
+version = "0.3.0"
+source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=9cd3752e05f615338ed56f7721bf8bab2f13525d#9cd3752e05f615338ed56f7721bf8bab2f13525d"
 dependencies = [
  "base64",
  "bincode",
@@ -241,23 +241,21 @@ dependencies = [
 
 [[package]]
 name = "anoma-rm-core"
-version = "1.2.0"
-source = "git+https://github.com/anoma/arm-risc0?tag=solana-v1.2.0#9c25e986bc8e190b03d28462fd6b703e6355c4c1"
+version = "2.0.0-rc.5"
+source = "git+https://github.com/anoma/arm-risc0?rev=5085021fffd2ce25e161010c8e2d67ff62b5a7de#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "bincode",
- "borsh",
  "bytemuck",
  "hex",
- "hex-literal",
+ "risc0-zkp",
  "serde",
- "serde_with",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "anoma-rm-risc0"
-version = "1.2.0"
-source = "git+https://github.com/anoma/arm-risc0?tag=solana-v1.2.0#9c25e986bc8e190b03d28462fd6b703e6355c4c1"
+version = "2.0.0-rc.5"
+source = "git+https://github.com/anoma/arm-risc0?rev=5085021fffd2ce25e161010c8e2d67ff62b5a7de#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "anoma-rm-core",
  "bincode",
@@ -268,14 +266,16 @@ dependencies = [
  "rand 0.8.6",
  "risc0-zkvm",
  "serde",
+ "serde_json",
  "serde_with",
+ "sha3 0.10.9",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "anoma-rm-risc0-gadgets"
-version = "1.2.0"
-source = "git+https://github.com/anoma/arm-risc0?tag=solana-v1.2.0#9c25e986bc8e190b03d28462fd6b703e6355c4c1"
+version = "2.0.0-rc.5"
+source = "git+https://github.com/anoma/arm-risc0?rev=5085021fffd2ce25e161010c8e2d67ff62b5a7de#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "aes-gcm",
  "alloy-primitives",
@@ -4811,6 +4811,7 @@ dependencies = [
 name = "transfer_library"
 version = "2.0.0"
 dependencies = [
+ "anoma-pa-solana-client",
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
  "bincode",
@@ -4818,7 +4819,6 @@ dependencies = [
  "k256",
  "lazy_static",
  "serde",
- "sha3 0.10.9",
  "transfer_witness",
 ]
 
@@ -4833,7 +4833,6 @@ dependencies = [
  "k256",
  "rand 0.9.4",
  "serde",
- "serde_with",
 ]
 
 [[package]]

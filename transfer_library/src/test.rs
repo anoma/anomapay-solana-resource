@@ -3,9 +3,15 @@
 // These exercise the committed guest ELF (embedded as `TOKEN_TRANSFER_ELF`)
 // through `TransferLogic::prove`. Proving is slow without `RISC0_DEV_MODE=1`;
 // set it when running these locally.
+use anoma_pa_solana_client::external_call::{OP_UNWRAP, OP_WRAP, SolanaExternalCall};
 use anoma_rm_risc0::{
-    Digest, NullifierKeyExt, logic_proof::LogicProver, nullifier_key::NullifierKey,
-    proving_system::ProofType, resource::Resource,
+    Digest,
+    logic_instance::LogicInstance,
+    logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
+    nullifier_key::NullifierKey,
+    proving_system::ProofType,
+    resource::Resource,
+    utils::words_to_bytes,
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
@@ -13,29 +19,23 @@ use anoma_rm_risc0_gadgets::{
 };
 use k256::Scalar;
 use transfer_witness::{
-    AUTH_SIGNATURE_DOMAIN, ValueInfo, calculate_label_ref, calculate_persistent_value_ref,
-    calculate_value_ref_from_solana_account,
+    AUTH_SIGNATURE_DOMAIN, FORWARDER_RESULT_SUCCESS, ValueInfo, calculate_label_ref,
+    calculate_persistent_value_ref, calculate_value_ref_from_solana_account,
+    call_type::{UNWRAP_SEGMENT_NUM_ACCOUNTS, WRAP_SEGMENT_NUM_ACCOUNTS},
 };
 
 use crate::TransferLogic;
 
-const PREVIOUS_FORWARDER_PROGRAM_ID: [u8; 32] = [0u8; 32];
 const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
-const UNEXPECTED_FORWARDER_PROGRAM_ID: [u8; 32] = [20u8; 32];
 const SPL_TOKEN_MINT: [u8; 32] = [1u8; 32];
 const SOLANA_ACCOUNT: [u8; 32] = [2u8; 32];
 const QUANTITY: u128 = 1000;
-const UNEXPECTED_QUANTITY: u128 = 1001;
 const NF_KEY_BYTES: [u8; 32] = [3u8; 32];
-const UNEXPECTED_NF_KEY_BYTES: [u8; 32] = [33u8; 32];
 const WRAP_NONCE: u64 = 4;
 const WRAP_DEADLINE: i64 = 1_800_000_000;
-const ED25519_SIG: [u8; 64] = [6u8; 64];
 const ED25519_IX_INDEX: u8 = 0;
 const AUTH_SK: [u8; 32] = [7u8; 32];
-const UNEXPECTED_AUTH_SK: [u8; 32] = [77u8; 32];
 const ENCRYPTION_SK: u32 = 8u32;
-const UNEXPECTED_ENCRYPTION_SK: u32 = 88u32;
 
 // A persistent resource under the given forwarder program id.
 fn create_persistent_resource(forwarder_program_id: [u8; 32]) -> Resource {
@@ -63,9 +63,8 @@ fn create_persistent_resource(forwarder_program_id: [u8; 32]) -> Resource {
     }
 }
 
-// An ephemeral resource under the current forwarder. The unwrap path
-// constrains the value_ref to the recipient Solana account; the migrate path
-// uses it only as a consumed trigger.
+// An ephemeral resource under the forwarder. The unwrap path constrains the
+// value_ref to the recipient Solana account; the wrap path ignores it.
 fn create_ephemeral_resource() -> Resource {
     let label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID, &SPL_TOKEN_MINT);
     let value_ref = calculate_value_ref_from_solana_account(&SOLANA_ACCOUNT);
@@ -82,45 +81,6 @@ fn create_ephemeral_resource() -> Resource {
     }
 }
 
-// A valid migrate resource logic: migrates a resource of the previous forwarder.
-fn create_migrate_resource_logic() -> TransferLogic {
-    use anoma_rm_risc0::merkle_path::MerklePath;
-
-    // The resource being migrated, under the previous forwarder.
-    let migrated_resource = create_persistent_resource(PREVIOUS_FORWARDER_PROGRAM_ID);
-
-    // The ephemeral resource that triggers the migration.
-    let self_resource = create_ephemeral_resource();
-
-    // It should be the real root in practice.
-    let action_tree_root = Digest::default();
-
-    let nf_key = NullifierKey::from_bytes(NF_KEY_BYTES);
-
-    let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
-    let auth_pk = AuthorityVerifyingKey::from_signing_key(&auth_sk);
-
-    let encryption_sk = SecretKey::new(Scalar::from(ENCRYPTION_SK));
-    let encryption_pk = generate_public_key(encryption_sk.inner());
-
-    let auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, action_tree_root.as_bytes());
-
-    TransferLogic::migrate_resource_logic(
-        self_resource,
-        action_tree_root,
-        nf_key.clone(),
-        FORWARDER_PROGRAM_ID,
-        SPL_TOKEN_MINT,
-        migrated_resource,
-        nf_key,                // using the same nf_key for simplicity
-        MerklePath::default(), // default path; only a real tx/action needs a valid path
-        auth_pk,
-        encryption_pk,
-        auth_sig,
-        PREVIOUS_FORWARDER_PROGRAM_ID,
-    )
-}
-
 #[test]
 fn test_mint() {
     let resource = create_ephemeral_resource();
@@ -133,12 +93,11 @@ fn test_mint() {
         SOLANA_ACCOUNT,
         WRAP_NONCE,
         WRAP_DEADLINE,
-        ED25519_SIG,
         ED25519_IX_INDEX,
     );
 
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
-    proof.verify().unwrap();
+    verify(&proof).unwrap();
 
     // A wrap must be triggered by a consumed resource.
     resource_logic.witness.is_consumed = false;
@@ -157,7 +116,7 @@ fn test_burn() {
     );
 
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
-    proof.verify().unwrap();
+    verify(&proof).unwrap();
 
     // An unwrap must be triggered by a created resource.
     resource_logic.witness.is_consumed = true;
@@ -191,7 +150,7 @@ fn test_transfer() {
     );
 
     let proof = consumed_resource_logic.prove(ProofType::Succinct).unwrap();
-    proof.verify().unwrap();
+    verify(&proof).unwrap();
 
     let created_resource = create_persistent_resource(FORWARDER_PROGRAM_ID);
     let (created_discovery_sk, created_discovery_pk) = random_keypair();
@@ -206,16 +165,16 @@ fn test_transfer() {
     );
 
     let proof = created_resource_logic.prove(ProofType::Succinct).unwrap();
-    proof.verify().unwrap();
+    verify(&proof).unwrap();
 
     // check discovery ciphertext
     let discovery_ciphertext =
-        Ciphertext::from_words(&proof.get_instance().unwrap().app_data.discovery_payload[0].blob);
+        Ciphertext::from_words(&get_instance(&proof).unwrap().app_data.discovery_payload[0].blob);
     discovery_ciphertext.decrypt(&created_discovery_sk).unwrap();
 
     // check encryption
     let encryption_ciphertext =
-        Ciphertext::from_words(&proof.get_instance().unwrap().app_data.resource_payload[0].blob);
+        Ciphertext::from_words(&get_instance(&proof).unwrap().app_data.resource_payload[0].blob);
     let plaintext = encryption_ciphertext.decrypt(&encryption_sk).unwrap();
     let expected_plaintext = bincode::serialize(&ResourceWithLabel {
         resource: created_resource,
@@ -238,185 +197,89 @@ fn test_transfer() {
     assert_eq!(deserialized.resource, created_resource, "Resource mismatch");
 }
 
+/// The one external call a proven ephemeral witness commits to.
+fn external_call(proof: &LogicVerifier) -> SolanaExternalCall {
+    let instance: LogicInstance = get_instance(proof).unwrap();
+    assert_eq!(instance.app_data.external_payload.len(), 1);
+    SolanaExternalCall::decode(words_to_bytes(&instance.app_data.external_payload[0].blob))
+        .expect("external-call blob should decode")
+}
+
 #[test]
-fn test_positive_migration() {
-    let resource_logic = create_migrate_resource_logic();
+fn wrap_external_call_commits_the_forwarder_segment() {
+    let action_tree_root = Digest::from_bytes([9u8; 32]);
+    let resource_logic = TransferLogic::mint_resource_logic_with_wrap_auth(
+        create_ephemeral_resource(),
+        action_tree_root,
+        NullifierKey::from_bytes(NF_KEY_BYTES),
+        FORWARDER_PROGRAM_ID,
+        SPL_TOKEN_MINT,
+        SOLANA_ACCOUNT,
+        WRAP_NONCE,
+        WRAP_DEADLINE,
+        ED25519_IX_INDEX,
+    );
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
-    proof.verify().unwrap();
+
+    let call = external_call(&proof);
+    assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+    assert_eq!(call.num_accounts, WRAP_SEGMENT_NUM_ACCOUNTS);
+    assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
+    // op(1) + token_mint(32) + amount(8) + user(32) + nonce(8) + deadline(8)
+    // + action_tree_root(32) + ed25519_ix_index(1)
+    assert_eq!(call.instruction_data.len(), 122);
+    assert_eq!(call.instruction_data[0], OP_WRAP);
+    assert_eq!(&call.instruction_data[1..33], &SPL_TOKEN_MINT, "token_mint");
+    assert_eq!(
+        u64::from_le_bytes(call.instruction_data[33..41].try_into().unwrap()),
+        QUANTITY as u64,
+        "amount"
+    );
+    assert_eq!(&call.instruction_data[41..73], &SOLANA_ACCOUNT, "user");
+    assert_eq!(
+        u64::from_le_bytes(call.instruction_data[73..81].try_into().unwrap()),
+        WRAP_NONCE,
+        "nonce"
+    );
+    assert_eq!(
+        i64::from_le_bytes(call.instruction_data[81..89].try_into().unwrap()),
+        WRAP_DEADLINE,
+        "deadline"
+    );
+    assert_eq!(
+        &call.instruction_data[89..121],
+        action_tree_root.as_bytes(),
+        "action_tree_root"
+    );
+    assert_eq!(
+        call.instruction_data[121], ED25519_IX_INDEX,
+        "ed25519_ix_index"
+    );
 }
 
 #[test]
-fn test_negative_migration_with_wrong_is_consumed_in_self_resource() {
-    let mut resource_logic = create_migrate_resource_logic();
+fn unwrap_external_call_commits_the_forwarder_segment() {
+    let resource_logic = TransferLogic::burn_resource_logic(
+        create_ephemeral_resource(),
+        Digest::default(),
+        FORWARDER_PROGRAM_ID,
+        SPL_TOKEN_MINT,
+        SOLANA_ACCOUNT,
+    );
+    let proof = resource_logic.prove(ProofType::Succinct).unwrap();
 
-    // Migration must be triggered by a consumed resource.
-    resource_logic.witness.is_consumed = false;
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_missing_migrate_info() {
-    let mut resource_logic = create_migrate_resource_logic();
-
-    resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info = None;
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_is_ephemeral_in_migrate_info() {
-    let mut resource_logic = create_migrate_resource_logic();
-
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        migrate_info.resource.is_ephemeral = true; // should be false for a persistent resource
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_auth_pk_in_value_info() {
-    let mut resource_logic = create_migrate_resource_logic();
-
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        let wrong_auth_sk = AuthoritySigningKey::from_bytes(&UNEXPECTED_AUTH_SK).unwrap();
-        let wrong_auth_pk = AuthorityVerifyingKey::from_signing_key(&wrong_auth_sk);
-        migrate_info.value_info.auth_pk = wrong_auth_pk;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_encryption_pk_in_value_info() {
-    let mut resource_logic = create_migrate_resource_logic();
-
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        let wrong_encryption_sk = SecretKey::new(Scalar::from(UNEXPECTED_ENCRYPTION_SK));
-        let wrong_encryption_pk = generate_public_key(wrong_encryption_sk.inner());
-        migrate_info.value_info.encryption_pk = wrong_encryption_pk;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_auth_sig() {
-    // Wrong auth_sk.
-    let mut resource_logic = create_migrate_resource_logic();
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        let wrong_auth_sk = AuthoritySigningKey::from_bytes(&UNEXPECTED_AUTH_SK).unwrap();
-        let wrong_auth_sig = wrong_auth_sk.sign(
-            AUTH_SIGNATURE_DOMAIN,
-            resource_logic.witness.action_tree_root.as_bytes(),
-        );
-        migrate_info.auth_sig = wrong_auth_sig;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-
-    // Wrong action_tree_root.
-    let mut resource_logic = create_migrate_resource_logic();
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        let wrong_action_tree_root = Digest::from_bytes([10u8; 32]);
-        let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
-        let wrong_auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, wrong_action_tree_root.as_bytes());
-        migrate_info.auth_sig = wrong_auth_sig;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-
-    // Wrong domain.
-    let mut resource_logic = create_migrate_resource_logic();
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
-        let wrong_auth_sig = auth_sk.sign(
-            b"WrongDomain",
-            resource_logic.witness.action_tree_root.as_bytes(),
-        );
-        migrate_info.auth_sig = wrong_auth_sig;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_quantity() {
-    let mut resource_logic = create_migrate_resource_logic();
-
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        migrate_info.resource.quantity = UNEXPECTED_QUANTITY;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_nf_key() {
-    let mut resource_logic = create_migrate_resource_logic();
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        migrate_info.nf_key = NullifierKey::from_bytes(UNEXPECTED_NF_KEY_BYTES);
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
-}
-
-#[test]
-fn test_negative_migration_with_wrong_forwarder_id_in_migrate_info() {
-    let mut resource_logic = create_migrate_resource_logic();
-
-    if let Some(migrate_info) = &mut resource_logic
-        .witness
-        .forwarder_info
-        .as_mut()
-        .unwrap()
-        .migrate_info
-    {
-        migrate_info.forwarder_program_id = UNEXPECTED_FORWARDER_PROGRAM_ID;
-    }
-    resource_logic.prove(ProofType::Succinct).unwrap_err();
+    let call = external_call(&proof);
+    assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+    assert_eq!(call.num_accounts, UNWRAP_SEGMENT_NUM_ACCOUNTS);
+    assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
+    // op(1) + token_mint(32) + amount(8) + recipient(32)
+    assert_eq!(call.instruction_data.len(), 73);
+    assert_eq!(call.instruction_data[0], OP_UNWRAP);
+    assert_eq!(&call.instruction_data[1..33], &SPL_TOKEN_MINT, "token_mint");
+    assert_eq!(
+        u64::from_le_bytes(call.instruction_data[33..41].try_into().unwrap()),
+        QUANTITY as u64,
+        "amount"
+    );
+    assert_eq!(&call.instruction_data[41..73], &SOLANA_ACCOUNT, "recipient");
 }

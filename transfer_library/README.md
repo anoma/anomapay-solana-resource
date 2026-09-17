@@ -14,11 +14,6 @@ constructors build the witness for each supported flow:
 | `create_persistent_resource_logic` | created persistent | mint a shielded resource (encrypted payload) |
 | `mint_resource_logic_with_wrap_auth` | consumed ephemeral | wrap SPL tokens (Ed25519 authorization) |
 | `burn_resource_logic` | created ephemeral | unwrap SPL tokens to a recipient |
-| `migrate_resource_logic` | consumed ephemeral | migrate a resource from the previous forwarder |
-
-`migrate_tx::construct_migrate_tx` assembles a complete, balanced ARM
-`Transaction` that migrates one resource: compliance unit, both logic proofs,
-and the delta proof.
 
 ## Guest artifacts
 

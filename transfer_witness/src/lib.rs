@@ -1,26 +1,21 @@
 //! The transfer witness library holds the struct to generate proofs over
 //! resource logics for the AnomaPay token-transfer resource on Solana: wrap and
-//! unwrap of SPL tokens through the SPL token forwarder, transfers between
-//! shielded owners, and migration of a resource from the previous forwarder.
+//! unwrap of SPL tokens through the SPL token forwarder, and transfers between
+//! shielded owners.
 pub mod call_type;
 
-use crate::call_type::CallType;
-use anoma_pa_solana_client::constants::{
-    FORWARDER_MIGRATE_NUM_ACCOUNTS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
-};
+use crate::call_type::{CallType, UNWRAP_SEGMENT_NUM_ACCOUNTS, WRAP_SEGMENT_NUM_ACCOUNTS};
 use anoma_pa_solana_client::external_call::{
-    OutputMode, SolanaExternalCall, encode_migrate_forwarder_input, encode_unwrap_forwarder_input,
-    encode_wrap_forwarder_input,
+    OutputMode, SolanaExternalCall, encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
 };
 pub use anoma_rm_risc0::resource_logic::LogicCircuit;
 use anoma_rm_risc0::{
     Digest,
     error::ArmError,
     logic_instance::{AppData, ExpirableBlob, LogicInstance},
-    merkle_path::{MerklePath, MerklePathExt},
     nullifier_key::NullifierKey,
     resource::Resource,
-    utils::{bytes_to_words, hash_bytes, risc0_to_core_digest},
+    utils::{bytes_to_words, hash_bytes},
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySignature, AuthorityVerifyingKey},
@@ -31,7 +26,6 @@ use k256::elliptic_curve::group::GroupEncoding;
 use rand::TryRngCore;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 
 pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorizationV2";
 
@@ -95,14 +89,15 @@ pub struct ValueInfo {
     pub encryption_pk: AffinePoint,
 }
 
-/// WrapAuthInfo contains the Ed25519 authorization data for wrapping SPL tokens.
-#[serde_as]
+/// WrapAuthInfo names the Ed25519 authorization for wrapping SPL tokens: the
+/// nonce and deadline the user signed over, and the index of the ed25519
+/// instruction in the settlement transaction that carries the signature. The
+/// forwarder verifies that instruction through the instructions sysvar; the
+/// signature itself is not part of the proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WrapAuthInfo {
     pub nonce: u64,
     pub deadline: i64,
-    #[serde_as(as = "[_; 64]")]
-    pub ed25519_signature: [u8; 64],
     pub ed25519_ix_index: u8,
 }
 
@@ -157,29 +152,10 @@ pub struct TokenTransferWitness {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ForwarderInfo {
     pub call_type: CallType,
-    /// The recipient/payer Solana account. Not needed for `Migrate`.
+    /// The user's token account owner for `Wrap`, the recipient for `Unwrap`.
     pub solana_account: Option<[u8; 32]>,
     /// Ed25519 wrap authorization, present only for `Wrap`.
     pub wrap_auth_info: Option<WrapAuthInfo>,
-    /// Migration data, present only for `Migrate` (moving a v1 resource to v2).
-    pub migrate_info: Option<MigrateInfo>,
-}
-
-/// MigrateInfo carries the data a `Migrate` call proves about the **v1 resource
-/// being migrated**: its resource, nullifier key, a Merkle `path` from the v1
-/// commitment tree (proving the resource existed), the owner's authorization
-/// signature and `ValueInfo`, and the **v1** forwarder program id used in its
-/// label.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct MigrateInfo {
-    pub resource: Resource,
-    pub nf_key: NullifierKey,
-    /// Merkle path from cm-tree v1 to prove existence of the migrated resource.
-    pub path: MerklePath,
-    pub auth_sig: AuthoritySignature,
-    pub value_info: ValueInfo,
-    /// The forwarder program id in the migrated resource label is still the v1 id.
-    pub forwarder_program_id: [u8; 32],
 }
 
 impl TokenTransferWitness {
@@ -286,10 +262,9 @@ impl TokenTransferWitness {
                     wrap_auth.nonce,
                     wrap_auth.deadline,
                     action_root,
-                    &wrap_auth.ed25519_signature,
                     wrap_auth.ed25519_ix_index,
                 );
-                (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
+                (inputs, WRAP_SEGMENT_NUM_ACCOUNTS)
             }
             CallType::Unwrap => {
                 if self.is_consumed {
@@ -315,83 +290,7 @@ impl TokenTransferWitness {
                     spl_amount_from_quantity(self.resource.quantity)?,
                     solana_account,
                 );
-                (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
-            }
-            CallType::Migrate => {
-                if !self.is_consumed {
-                    return Err(ArmError::ProveFailed(
-                        "Token migration must be triggered by a consumed resource".to_string(),
-                    ));
-                }
-
-                let migrate_info = forwarder_info
-                    .migrate_info
-                    .as_ref()
-                    .ok_or(ArmError::MissingField("Migrate info"))?;
-
-                let amount = spl_amount_from_quantity(self.resource.quantity)?;
-
-                // compute migrate resource commitment tree root
-                let migrate_cm = migrate_info.resource.commitment();
-                let migrate_root = migrate_info.path.root(&migrate_cm);
-
-                // check migrate_resource is non-ephemeral
-                if migrate_info.resource.is_ephemeral {
-                    return Err(ArmError::ProveFailed(
-                        "Migrate resource must be non-ephemeral".to_string(),
-                    ));
-                }
-
-                // check migrate_resource authorization
-                if migrate_info.resource.value_ref
-                    != calculate_persistent_value_ref(&migrate_info.value_info)
-                {
-                    return Err(ArmError::ProveFailed(
-                        "Invalid migrate resource value_ref".to_string(),
-                    ));
-                }
-
-                if migrate_info
-                    .value_info
-                    .auth_pk
-                    .verify(AUTH_SIGNATURE_DOMAIN, action_root, &migrate_info.auth_sig)
-                    .is_err()
-                {
-                    return Err(ArmError::InvalidSignature);
-                }
-
-                // check migrate_resource quantity
-                if migrate_info.resource.quantity != self.resource.quantity {
-                    return Err(ArmError::ProveFailed(
-                        "Wrong migrate resource quantity".to_string(),
-                    ));
-                }
-
-                // compute migrate resource nullifier
-                let migrate_nf = migrate_info
-                    .resource
-                    .nullifier_from_commitment(&migrate_info.nf_key, &migrate_cm)?;
-
-                // check migrate_resource label_ref against the v1 forwarder program id
-                let migrate_label_ref_v1 = calculate_label_ref(
-                    &migrate_info.forwarder_program_id,
-                    &label_info.spl_token_mint,
-                );
-                if migrate_info.resource.label_ref != migrate_label_ref_v1 {
-                    return Err(ArmError::ProveFailed(
-                        "Invalid migrate resource label_ref".to_string(),
-                    ));
-                }
-
-                let inputs = encode_migrate_forwarder_input(
-                    &label_info.spl_token_mint,
-                    amount,
-                    migrate_nf.as_bytes(),
-                    migrate_root.as_bytes(),
-                    migrate_info.resource.logic_ref.as_bytes(),
-                    &migrate_info.forwarder_program_id,
-                );
-                (inputs, FORWARDER_MIGRATE_NUM_ACCOUNTS)
+                (inputs, UNWRAP_SEGMENT_NUM_ACCOUNTS)
             }
         };
 
@@ -530,13 +429,13 @@ impl LogicCircuit for TokenTransferWitness {
 
 /// Calculate the value ref based on an authorization key and an encryption key for a given user.
 pub fn calculate_persistent_value_ref(value: &ValueInfo) -> Digest {
-    risc0_to_core_digest(hash_bytes(
+    hash_bytes(
         &[
             value.auth_pk.to_bytes(),
             value.encryption_pk.to_bytes().to_vec(),
         ]
         .concat(),
-    ))
+    )
 }
 
 /// Create the value_ref for a Solana account pubkey (full 32 bytes, no padding needed).
@@ -546,9 +445,7 @@ pub fn calculate_value_ref_from_solana_account(solana_account: &[u8; 32]) -> Dig
 
 /// Calculate the label ref based on the forwarder program and token mint.
 pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8; 32]) -> Digest {
-    risc0_to_core_digest(hash_bytes(
-        &[forwarder_program_id.as_slice(), spl_token_mint.as_slice()].concat(),
-    ))
+    hash_bytes(&[forwarder_program_id.as_slice(), spl_token_mint.as_slice()].concat())
 }
 
 #[cfg(test)]
@@ -630,10 +527,8 @@ mod tests {
                 wrap_auth_info: Some(WrapAuthInfo {
                     nonce: 7,
                     deadline: 1_800_000_000,
-                    ed25519_signature: [0x44; 64],
                     ed25519_ix_index: 0,
                 }),
-                migrate_info: None,
             }),
             label_info: Some(LabelInfo {
                 forwarder_program_id,
@@ -658,7 +553,6 @@ mod tests {
                 call_type: CallType::Unwrap,
                 solana_account: Some(recipient),
                 wrap_auth_info: None,
-                migrate_info: None,
             }),
             label_info: Some(LabelInfo {
                 forwarder_program_id,

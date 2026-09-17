@@ -4,14 +4,11 @@
 //! Of particular interest are the `TransferLogic` struct and the
 //! `TokenTransferWitness` it wraps.
 
-pub mod migrate_tx;
-
 #[cfg(test)]
 mod test;
 
 use anoma_rm_risc0::{
-    Digest, logic_proof::LogicProver, merkle_path::MerklePath, nullifier_key::NullifierKey,
-    resource::Resource,
+    Digest, logic_proof::LogicProver, nullifier_key::NullifierKey, resource::Resource,
 };
 use anoma_rm_risc0_gadgets::authority::{AuthoritySignature, AuthorityVerifyingKey};
 use hex::FromHex;
@@ -20,8 +17,8 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
 use transfer_witness::{
-    EncryptionInfo, ForwarderInfo, LabelInfo, MigrateInfo, TokenTransferWitness, ValueInfo,
-    WrapAuthInfo, call_type::CallType,
+    EncryptionInfo, ForwarderInfo, LabelInfo, TokenTransferWitness, ValueInfo, WrapAuthInfo,
+    call_type::CallType,
 };
 
 /// The binary program that is executed in the zkvm to generate proofs.
@@ -31,7 +28,7 @@ pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-gues
 lazy_static! {
     /// The identity of the binary that executes the proofs in the zkvm.
     pub static ref TOKEN_TRANSFER_ID: Digest =
-        Digest::from_hex("93e00f30c272a747fbd48c0938ea71842e88a34db15cebc4fff3f451c320588d")
+        Digest::from_hex("134aaf7eb176858c0e1b68f990ef9e8bd691603c7bd13ad0c1976219df207b2d")
             .unwrap();
 }
 
@@ -129,8 +126,9 @@ impl TransferLogic {
         )
     }
 
-    /// Creates a resource logic for an ephemeral resource created during minting
-    /// (wrapping SPL tokens), authorized by an Ed25519 signature.
+    /// Creates a resource logic for the ephemeral resource consumed when
+    /// wrapping SPL tokens, authorized by the user's Ed25519 signature in the
+    /// settlement transaction.
     #[allow(clippy::too_many_arguments)]
     pub fn mint_resource_logic_with_wrap_auth(
         resource: Resource,
@@ -141,20 +139,17 @@ impl TransferLogic {
         solana_account: [u8; 32],
         nonce: u64,
         deadline: i64,
-        ed25519_signature: [u8; 64],
         ed25519_ix_index: u8,
     ) -> Self {
         let wrap_auth_info = WrapAuthInfo {
             nonce,
             deadline,
-            ed25519_signature,
             ed25519_ix_index,
         };
         let forwarder_info = ForwarderInfo {
             call_type: CallType::Wrap,
             solana_account: Some(solana_account),
             wrap_auth_info: Some(wrap_auth_info),
-            migrate_info: None,
         };
         let label_info = LabelInfo {
             forwarder_program_id,
@@ -187,7 +182,6 @@ impl TransferLogic {
             call_type: CallType::Unwrap,
             solana_account: Some(recipient_account),
             wrap_auth_info: None,
-            migrate_info: None,
         };
         let label_info = LabelInfo {
             forwarder_program_id,
@@ -199,64 +193,6 @@ impl TransferLogic {
             false,
             action_tree_root,
             None,
-            None,
-            None,
-            Some(forwarder_info),
-            Some(label_info),
-            None,
-        )
-    }
-
-    /// Creates a resource logic for an ephemeral resource that migrates a v1
-    /// resource into v2.
-    #[allow(clippy::too_many_arguments)]
-    pub fn migrate_resource_logic(
-        self_resource: Resource,
-        action_tree_root: Digest,
-        self_nf_key: NullifierKey,
-        // forwarder program id v2
-        self_forwarder_program_id: [u8; 32],
-        spl_token_mint: [u8; 32],
-        migrated_resource: Resource,
-        migrated_nf_key: NullifierKey,
-        migrated_resource_path: MerklePath,
-        migrated_auth_pk: AuthorityVerifyingKey,
-        migrated_encryption_pk: AffinePoint,
-        migrated_auth_sig: AuthoritySignature,
-        // forwarder program id v1
-        migrated_forwarder_program_id: [u8; 32],
-    ) -> Self {
-        let label_info = LabelInfo {
-            forwarder_program_id: self_forwarder_program_id,
-            spl_token_mint,
-        };
-
-        let migrated_value_info = ValueInfo {
-            auth_pk: migrated_auth_pk,
-            encryption_pk: migrated_encryption_pk,
-        };
-
-        let migrate_info = MigrateInfo {
-            resource: migrated_resource,
-            nf_key: migrated_nf_key,
-            path: migrated_resource_path,
-            auth_sig: migrated_auth_sig,
-            value_info: migrated_value_info,
-            forwarder_program_id: migrated_forwarder_program_id,
-        };
-
-        let forwarder_info = ForwarderInfo {
-            call_type: CallType::Migrate,
-            solana_account: None,
-            wrap_auth_info: None,
-            migrate_info: Some(migrate_info),
-        };
-
-        Self::new(
-            self_resource,
-            true,
-            action_tree_root,
-            Some(self_nf_key),
             None,
             None,
             Some(forwarder_info),

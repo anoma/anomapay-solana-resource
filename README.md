@@ -6,9 +6,8 @@ on the [RISC Zero](https://dev.risczero.com) zkVM.
 
 This repository packages the witness types, the resource-logic library, and the
 RISC Zero guest program that prove the validity of token-transfer resources
-backed by SPL tokens: wrap and unwrap through the SPL token forwarder, transfers
-between shielded owners, and migration of a resource from the previous
-forwarder. The proving artifacts (guest ELF, `ImageID`, and the Rust APIs around
+backed by SPL tokens: wrap and unwrap through the SPL token forwarder, and
+transfers between shielded owners. The proving artifacts (guest ELF, `ImageID`, and the Rust APIs around
 them) are versioned here independently of the services that consume them.
 
 ## Layout
@@ -45,14 +44,14 @@ Defines `TokenTransferWitness`: the inputs needed to prove the resource logic of
 one consumed or created resource (the resource itself, nullifier key,
 authorization signature, encryption info, forwarder call data, label and value
 info). Implements the ARM `LogicCircuit` constraint function the guest executes,
-including the wrap, unwrap and migrate external-call encodings for the SPL token
+including the wrap and unwrap external-call encodings for the SPL token
 forwarder. Wrapping is authorized by an Ed25519 signature carried in the
 settlement transaction (`WrapAuthInfo` names the instruction).
 
 ### `transfer_library`
 Host-side proving API. `TransferLogic` wraps `TokenTransferWitness` with
 constructors for the supported flows (consume and create persistent resources,
-mint via wrap, burn via unwrap, migrate) and implements ARM's `LogicProver`.
+mint via wrap, burn via unwrap) and implements ARM's `LogicProver`.
 Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
 [`transfer_library/VK_HISTORY.md`](transfer_library/VK_HISTORY.md) for the
 verifying-key history and the migration record of every rotation.

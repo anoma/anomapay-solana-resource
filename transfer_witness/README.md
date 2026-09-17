@@ -28,7 +28,7 @@ on the resource:
   `sha256(forwarder_program_id ‖ spl_token_mint)`, and the call is encoded into
   the instance's `external_payload` as a `SolanaExternalCall` (`Wrap` from a
   consumed resource, `Unwrap` to the recipient a created resource's `value_ref`
-  names, `Migrate` from a consumed resource carrying `MigrateInfo`).
+  names).
 - **consumed persistent** — the owner's authorization signature over the action
   tree root, under `AUTH_SIGNATURE_DOMAIN`, must verify against the `auth_pk` in
   the resource's `value_ref`.
@@ -38,18 +38,17 @@ on the resource:
 
 ## Supporting types
 
-- `ForwarderInfo { call_type, solana_account, wrap_auth_info, migrate_info }`
-- `WrapAuthInfo { nonce, deadline, ed25519_signature, ed25519_ix_index }` — the
-  Ed25519 wrap authorization the settlement transaction carries.
-- `MigrateInfo` — the resource being migrated from the previous forwarder, its
-  nullifier key, Merkle path, authorization signature, value info and forwarder
-  program id.
+- `ForwarderInfo { call_type, solana_account, wrap_auth_info }`
+- `WrapAuthInfo { nonce, deadline, ed25519_ix_index }` — the nonce and deadline
+  the user signed and the settlement-transaction index of the ed25519
+  instruction carrying the signature.
 - `LabelInfo`, `ValueInfo`, `EncryptionInfo`, `ResourceWithLabel`.
 - `calculate_label_ref`, `calculate_persistent_value_ref`,
   `calculate_value_ref_from_solana_account`, `spl_amount_from_quantity`.
 
 ## `call_type`
 
-`CallType { Wrap, Unwrap, Migrate }`. The op codes and instruction-data encoders
-are owned by `anoma-pa-solana-client` and re-exported here, so the circuit and
-the on-chain forwarder agree byte for byte.
+`CallType { Wrap, Unwrap }` and the account count of each call's CPI segment
+(`WRAP_SEGMENT_NUM_ACCOUNTS`, `UNWRAP_SEGMENT_NUM_ACCOUNTS`). The op codes and
+instruction-data encoders are owned by `anoma-pa-solana-client`, so the circuit
+and the on-chain forwarder agree byte for byte.
