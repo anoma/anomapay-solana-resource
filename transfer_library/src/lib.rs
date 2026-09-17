@@ -13,8 +13,8 @@ use anoma_rm_risc0::{
 use anoma_rm_risc0_gadgets::authority::{AuthoritySignature, AuthorityVerifyingKey};
 use hex::FromHex;
 use k256::AffinePoint;
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 use transfer_witness::{
     EncryptionInfo, ForwarderInfo, LabelInfo, TokenTransferWitness, ValueInfo, WrapAuthInfo,
@@ -25,12 +25,10 @@ use transfer_witness::{
 /// This program takes in a witness as argument and runs the constraint function on it.
 pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-guest.bin");
 
-lazy_static! {
-    /// The identity of the binary that executes the proofs in the zkvm.
-    pub static ref TOKEN_TRANSFER_ID: Digest =
-        Digest::from_hex("134aaf7eb176858c0e1b68f990ef9e8bd691603c7bd13ad0c1976219df207b2d")
-            .unwrap();
-}
+/// The identity of the binary that executes the proofs in the zkvm.
+pub static TOKEN_TRANSFER_ID: LazyLock<Digest> = LazyLock::new(|| {
+    Digest::from_hex("6a88d368d3155fa785301807417e2624095732a2622d2bc8eb0f03bf4f6e877c").unwrap()
+});
 
 /// Holds the transfer resource logic.
 /// The witness is the input to create a proof, so a `TransferLogic` can be used
@@ -41,33 +39,6 @@ pub struct TransferLogic {
 }
 
 impl TransferLogic {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        resource: Resource,
-        is_consumed: bool,
-        action_tree_root: Digest,
-        nf_key: Option<NullifierKey>,
-        auth_sig: Option<AuthoritySignature>,
-        encryption_info: Option<EncryptionInfo>,
-        forwarder_info: Option<ForwarderInfo>,
-        label_info: Option<LabelInfo>,
-        value_info: Option<ValueInfo>,
-    ) -> Self {
-        Self {
-            witness: TokenTransferWitness::new(
-                resource,
-                is_consumed,
-                action_tree_root,
-                nf_key,
-                auth_sig,
-                encryption_info,
-                forwarder_info,
-                label_info,
-                value_info,
-            ),
-        }
-    }
-
     /// Creates resource logic for consuming a persistent resource.
     pub fn consume_persistent_resource_logic(
         resource: Resource,
@@ -77,21 +48,20 @@ impl TransferLogic {
         encryption_pk: AffinePoint,
         auth_sig: AuthoritySignature,
     ) -> Self {
-        let value_info = ValueInfo {
-            auth_pk,
-            encryption_pk,
-        };
-        Self::new(
-            resource,
-            true,
-            action_tree_root,
-            Some(nf_key),
-            Some(auth_sig),
-            None,
-            None,
-            None,
-            Some(value_info),
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: true,
+                action_tree_root,
+                nf_key: Some(nf_key),
+                auth_sig: Some(auth_sig),
+                value_info: Some(ValueInfo {
+                    auth_pk,
+                    encryption_pk,
+                }),
+                ..Default::default()
+            },
+        }
     }
 
     /// Creates a resource logic for a persistent resource creation.
@@ -104,26 +74,23 @@ impl TransferLogic {
         forwarder_program_id: [u8; 32],
         spl_token_mint: [u8; 32],
     ) -> Self {
-        let encryption_info = EncryptionInfo::new(discovery_pk);
-        let label_info = LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        };
-        let value_info = ValueInfo {
-            auth_pk,
-            encryption_pk,
-        };
-        Self::new(
-            resource,
-            false,
-            action_tree_root,
-            None,
-            None,
-            Some(encryption_info),
-            None,
-            Some(label_info),
-            Some(value_info),
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: false,
+                action_tree_root,
+                encryption_info: Some(EncryptionInfo::new(discovery_pk)),
+                label_info: Some(LabelInfo {
+                    forwarder_program_id,
+                    spl_token_mint,
+                }),
+                value_info: Some(ValueInfo {
+                    auth_pk,
+                    encryption_pk,
+                }),
+                ..Default::default()
+            },
+        }
     }
 
     /// Creates a resource logic for the ephemeral resource consumed when
@@ -141,32 +108,28 @@ impl TransferLogic {
         deadline: i64,
         ed25519_ix_index: u8,
     ) -> Self {
-        let wrap_auth_info = WrapAuthInfo {
-            nonce,
-            deadline,
-            ed25519_ix_index,
-        };
-        let forwarder_info = ForwarderInfo {
-            call_type: CallType::Wrap,
-            solana_account: Some(solana_account),
-            wrap_auth_info: Some(wrap_auth_info),
-        };
-        let label_info = LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        };
-
-        Self::new(
-            resource,
-            true,
-            action_tree_root,
-            Some(nf_key),
-            None,
-            None,
-            Some(forwarder_info),
-            Some(label_info),
-            None,
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: true,
+                action_tree_root,
+                nf_key: Some(nf_key),
+                forwarder_info: Some(ForwarderInfo {
+                    call_type: CallType::Wrap,
+                    solana_account: Some(solana_account),
+                    wrap_auth_info: Some(WrapAuthInfo {
+                        nonce,
+                        deadline,
+                        ed25519_ix_index,
+                    }),
+                }),
+                label_info: Some(LabelInfo {
+                    forwarder_program_id,
+                    spl_token_mint,
+                }),
+                ..Default::default()
+            },
+        }
     }
 
     /// Creates a resource logic for a resource that is created when burning
@@ -178,27 +141,23 @@ impl TransferLogic {
         spl_token_mint: [u8; 32],
         recipient_account: [u8; 32],
     ) -> Self {
-        let forwarder_info = ForwarderInfo {
-            call_type: CallType::Unwrap,
-            solana_account: Some(recipient_account),
-            wrap_auth_info: None,
-        };
-        let label_info = LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        };
-
-        Self::new(
-            resource,
-            false,
-            action_tree_root,
-            None,
-            None,
-            None,
-            Some(forwarder_info),
-            Some(label_info),
-            None,
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: false,
+                action_tree_root,
+                forwarder_info: Some(ForwarderInfo {
+                    call_type: CallType::Unwrap,
+                    solana_account: Some(recipient_account),
+                    wrap_auth_info: None,
+                }),
+                label_info: Some(LabelInfo {
+                    forwarder_program_id,
+                    spl_token_mint,
+                }),
+                ..Default::default()
+            },
+        }
     }
 }
 

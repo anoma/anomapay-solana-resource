@@ -22,18 +22,19 @@ prints is the VK; the ELF it writes is what `transfer_library` embeds. The
 `cargo-risczero` that runs the build must be able to build edition-2024 crates
 (3.0.5 is known to; the builder image is `r0.1.88.0`).
 
-CI rebuilds the guest the same way and fails if the printed image ID differs
-from `TOKEN_TRANSFER_ID`, so the checked-in ELF is always reproducible from
-the checked-in source.
+CI rebuilds the guest the same way and fails if the ELF differs from the
+embedded one, and a unit test checks that `TOKEN_TRANSFER_ID` is the image ID
+of the embedded ELF, so the checked-in key is always reproducible from the
+checked-in source.
 
 ## Required invariants
 
-1. **Pin every git dependency by exact `rev`, in BOTH manifests.** The guest
-   resolves its `anoma-rm-risc0` / `anoma-pa-solana-client` dependencies through
-   the workspace, so the pins in the root `Cargo.toml` govern, not only the guest
-   manifest. Pin both to the same revs. A `branch = "..."` pin re-resolves to the
-   branch head whenever the lockfile is regenerated, so a branch pin silently
-   rotates the VK.
+1. **Pin every git dependency by exact `rev` in the root `Cargo.toml`.** The
+   guest depends on `transfer_witness` by path, and cargo resolves that crate's
+   `{ workspace = true }` dependencies against the repository root, so the root
+   pins govern the guest too. A `branch = "..."` pin re-resolves to the branch
+   head whenever the lockfile is regenerated, so a branch pin silently rotates
+   the VK.
 
 2. **Any change of a git dependency's source id rotates the VK.** Cargo derives
    each crate's metadata hash from its package id, which includes the git URL,

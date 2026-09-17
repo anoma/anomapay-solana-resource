@@ -32,7 +32,8 @@ transfer_witness ──► transfer_circuit ──(ELF)──► transfer_librar
 
 - `transfer_witness` is the leaf; the guest and the library both build on it.
 - `transfer_circuit` is the guest *source*, depending on the witness crate by
-  relative path; building it produces the guest ELF and its `ImageID`.
+  relative path (its `{ workspace = true }` pins resolve against this root);
+  building it produces the guest ELF and its `ImageID`.
 - `transfer_library` **embeds that prebuilt guest ELF** (`include_bytes!`) and
   exposes the matching `ImageID`, so a host can prove and verify without
   rebuilding the guest.
