@@ -26,7 +26,6 @@ rand = "0.9.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_with = { version = "3.0", features = ["hex", "base64"] }
 sha3 = "0.10"
-transfer_library = { path = "transfer_library" }
 transfer_witness = { path = "transfer_witness" }
 
 # Always optimize; building and running the guest takes much longer without optimization.

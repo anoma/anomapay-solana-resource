@@ -28,16 +28,15 @@ not share the host workspace's lockfile or profile.
 ### Dependency graph
 
 ```
-transfer_witness ──► transfer_library ──► transfer_circuit
-                                          (guest embeds the library ELF)
+transfer_witness ──► transfer_circuit ──(ELF)──► transfer_library
 ```
 
-- `transfer_witness` is the leaf; everything else builds on it.
-- `transfer_library` **embeds the prebuilt guest ELF** (`include_bytes!`) and
-  exposes the matching `ImageID`, so a host can verify proofs without rebuilding
-  the guest.
-- `transfer_circuit` is the guest *source*, used to (re)produce that ELF, and
-  depends on the witness crate by relative path.
+- `transfer_witness` is the leaf; the guest and the library both build on it.
+- `transfer_circuit` is the guest *source*, depending on the witness crate by
+  relative path; building it produces the guest ELF and its `ImageID`.
+- `transfer_library` **embeds that prebuilt guest ELF** (`include_bytes!`) and
+  exposes the matching `ImageID`, so a host can prove and verify without
+  rebuilding the guest.
 
 ## Crates
 
@@ -89,7 +88,7 @@ RISC0_DEV_MODE=1 cargo test --workspace
 ## CI
 
 `.github/workflows/ci.yml` checks that `TOKEN_TRANSFER_ID` is recorded in
-`VK_HISTORY.md`, formats (rustfmt in both workspaces, taplo), builds, runs the
+`VK_HISTORY.md`, formats (rustfmt in the host workspace and in each circuit workspace, taplo), builds, runs the
 dev-mode tests, and runs clippy.
 
 ## Versioning

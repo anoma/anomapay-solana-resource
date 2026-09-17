@@ -1,5 +1,5 @@
-//! The v2 transfer library contains the definition of the resource logics for
-//! the simple transfer application, with migration support.
+//! The transfer library contains the definition of the resource logics for
+//! the AnomaPay token-transfer resource.
 //!
 //! Of particular interest are the `TransferLogic` struct and the
 //! `TokenTransferWitness` it wraps.
@@ -19,8 +19,10 @@ use k256::AffinePoint;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
-use transfer_witness::{EncryptionInfo, LabelInfo, ValueInfo};
-use transfer_witness::{ForwarderInfo, MigrateInfo, TokenTransferWitness, call_type::CallType};
+use transfer_witness::{
+    EncryptionInfo, ForwarderInfo, LabelInfo, MigrateInfo, TokenTransferWitness, ValueInfo,
+    WrapAuthInfo, call_type::CallType,
+};
 
 /// The binary program that is executed in the zkvm to generate proofs.
 /// This program takes in a witness as argument and runs the constraint function on it.
@@ -142,7 +144,7 @@ impl TransferLogic {
         ed25519_signature: [u8; 64],
         ed25519_ix_index: u8,
     ) -> Self {
-        let wrap_auth_info = transfer_witness::WrapAuthInfo {
+        let wrap_auth_info = WrapAuthInfo {
             nonce,
             deadline,
             ed25519_signature,

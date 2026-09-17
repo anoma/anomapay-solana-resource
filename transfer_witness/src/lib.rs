@@ -4,9 +4,13 @@
 //! shielded owners, and migration of a resource from the previous forwarder.
 pub mod call_type;
 
-use crate::call_type::{
-    CallType, MIGRATE_FORWARDER_NUM_ACCOUNTS, encode_migrate_forwarder_input,
-    encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
+use crate::call_type::CallType;
+use anoma_pa_solana_client::constants::{
+    FORWARDER_MIGRATE_NUM_ACCOUNTS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+};
+use anoma_pa_solana_client::external_call::{
+    OutputMode, SolanaExternalCall, encode_migrate_forwarder_input, encode_unwrap_forwarder_input,
+    encode_wrap_forwarder_input,
 };
 pub use anoma_rm_risc0::resource_logic::LogicCircuit;
 use anoma_rm_risc0::{
@@ -57,29 +61,15 @@ pub struct EncryptionInfo {
 
 impl EncryptionInfo {
     pub fn new(discovery_pk: &AffinePoint) -> Self {
-        let mut rng = OsRng;
-        let discovery_nonce = {
-            let mut nonce = [0u8; 12];
-            rng.try_fill_bytes(&mut nonce)
-                .expect("Failed to fill discovery nonce");
-            nonce
-        };
         let discovery_sk = SecretKey::random();
-        let discovery_ciphertext = Ciphertext::encrypt_with_nonce(
-            &vec![0u8],
-            discovery_pk,
-            &discovery_sk,
-            discovery_nonce
-                .as_slice()
-                .try_into()
-                .expect("Failed to convert discovery nonce"),
-        )
-        .unwrap()
-        .as_words();
+        let discovery_ciphertext = Ciphertext::encrypt(&vec![0u8], discovery_pk, &discovery_sk)
+            .unwrap()
+            .as_words();
         let sender_sk = SecretKey::random();
         let encryption_nonce = {
             let mut nonce = [0u8; 12];
-            rng.try_fill_bytes(&mut nonce)
+            OsRng
+                .try_fill_bytes(&mut nonce)
                 .expect("Failed to fill encryption nonce");
             nonce
         };
@@ -163,7 +153,7 @@ pub struct TokenTransferWitness {
 }
 
 /// ForwarderInfo holds information about the forwarder program being used by a
-/// transaction. Unlike v1's `ForwarderInfo`, it supports the `Migrate` call type.
+/// transaction and which call it makes.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ForwarderInfo {
     pub call_type: CallType,
@@ -193,6 +183,32 @@ pub struct MigrateInfo {
 }
 
 impl TokenTransferWitness {
+    /// Create a new transfer witness.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        resource: Resource,
+        is_consumed: bool,
+        action_tree_root: Digest,
+        nf_key: Option<NullifierKey>,
+        auth_sig: Option<AuthoritySignature>,
+        encryption_info: Option<EncryptionInfo>,
+        forwarder_info: Option<ForwarderInfo>,
+        label_info: Option<LabelInfo>,
+        value_info: Option<ValueInfo>,
+    ) -> Self {
+        Self {
+            is_consumed,
+            resource,
+            action_tree_root,
+            nf_key,
+            auth_sig,
+            encryption_info,
+            forwarder_info,
+            label_info,
+            value_info,
+        }
+    }
+
     /// Compute the tag (nullifier for consumed, commitment for created).
     pub fn tag(&self) -> Result<Digest, ArmError> {
         if self.is_consumed {
@@ -273,7 +289,7 @@ impl TokenTransferWitness {
                     &wrap_auth.ed25519_signature,
                     wrap_auth.ed25519_ix_index,
                 );
-                (inputs, 12u8)
+                (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
             }
             CallType::Unwrap => {
                 if self.is_consumed {
@@ -299,7 +315,7 @@ impl TokenTransferWitness {
                     spl_amount_from_quantity(self.resource.quantity)?,
                     solana_account,
                 );
-                (inputs, 9u8)
+                (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
             }
             CallType::Migrate => {
                 if !self.is_consumed {
@@ -375,7 +391,7 @@ impl TokenTransferWitness {
                     migrate_info.resource.logic_ref.as_bytes(),
                     &migrate_info.forwarder_program_id,
                 );
-                (inputs, MIGRATE_FORWARDER_NUM_ACCOUNTS)
+                (inputs, FORWARDER_MIGRATE_NUM_ACCOUNTS)
             }
         };
 
@@ -512,39 +528,6 @@ impl LogicCircuit for TokenTransferWitness {
     }
 }
 
-impl TokenTransferWitness {
-    /// Create a new transfer witness.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        resource: Resource,
-        is_consumed: bool,
-        action_tree_root: Digest,
-        nf_key: Option<NullifierKey>,
-        auth_sig: Option<AuthoritySignature>,
-        encryption_info: Option<EncryptionInfo>,
-        forwarder_info: Option<ForwarderInfo>,
-        label_info: Option<LabelInfo>,
-        value_info: Option<ValueInfo>,
-    ) -> Self {
-        Self {
-            is_consumed,
-            resource,
-            action_tree_root,
-            nf_key,
-            auth_sig,
-            encryption_info,
-            forwarder_info,
-            label_info,
-            value_info,
-        }
-    }
-}
-
-// `SolanaExternalCall` and `OutputMode` are owned by `anoma-pa-solana-client`.
-// Re-exported here so existing callers using `transfer_witness::SolanaExternalCall`
-// keep compiling.
-pub use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
-
 /// Calculate the value ref based on an authorization key and an encryption key for a given user.
 pub fn calculate_persistent_value_ref(value: &ValueInfo) -> Digest {
     risc0_to_core_digest(hash_bytes(
@@ -571,7 +554,7 @@ pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::call_type::{OP_UNWRAP, OP_WRAP};
+    use anoma_pa_solana_client::external_call::{OP_UNWRAP, OP_WRAP};
     use anoma_rm_risc0::utils::words_to_bytes;
 
     const ABOVE_U64: u128 = u64::MAX as u128 + 1;

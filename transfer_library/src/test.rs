@@ -1,11 +1,11 @@
-// Circuit tests for the v2 Solana token-transfer resource logic (with migration).
+// Circuit tests for the Solana token-transfer resource logic.
 //
 // These exercise the committed guest ELF (embedded as `TOKEN_TRANSFER_ELF`)
 // through `TransferLogic::prove`. Proving is slow without `RISC0_DEV_MODE=1`;
 // set it when running these locally.
 use anoma_rm_risc0::{
     Digest, NullifierKeyExt, logic_proof::LogicProver, nullifier_key::NullifierKey,
-    resource::Resource,
+    proving_system::ProofType, resource::Resource,
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
@@ -13,14 +13,14 @@ use anoma_rm_risc0_gadgets::{
 };
 use k256::Scalar;
 use transfer_witness::{
-    ValueInfo, calculate_label_ref, calculate_persistent_value_ref,
+    AUTH_SIGNATURE_DOMAIN, ValueInfo, calculate_label_ref, calculate_persistent_value_ref,
     calculate_value_ref_from_solana_account,
 };
 
 use crate::TransferLogic;
 
-const FORWARDER_PROGRAM_ID_V1: [u8; 32] = [0u8; 32];
-const FORWARDER_PROGRAM_ID_V2: [u8; 32] = [10u8; 32];
+const PREVIOUS_FORWARDER_PROGRAM_ID: [u8; 32] = [0u8; 32];
+const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
 const UNEXPECTED_FORWARDER_PROGRAM_ID: [u8; 32] = [20u8; 32];
 const SPL_TOKEN_MINT: [u8; 32] = [1u8; 32];
 const SOLANA_ACCOUNT: [u8; 32] = [2u8; 32];
@@ -37,9 +37,9 @@ const UNEXPECTED_AUTH_SK: [u8; 32] = [77u8; 32];
 const ENCRYPTION_SK: u32 = 8u32;
 const UNEXPECTED_ENCRYPTION_SK: u32 = 88u32;
 
-// Create a sample persistent resource in v2 for testing.
-fn create_persistent_resource_v2() -> Resource {
-    let label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID_V2, &SPL_TOKEN_MINT);
+// A persistent resource under the given forwarder program id.
+fn create_persistent_resource(forwarder_program_id: [u8; 32]) -> Resource {
+    let label_ref = calculate_label_ref(&forwarder_program_id, &SPL_TOKEN_MINT);
     let nk_commitment = NullifierKey::from_bytes(NF_KEY_BYTES).commit();
     let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
     let auth_pk = AuthorityVerifyingKey::from_signing_key(&auth_sk);
@@ -63,11 +63,11 @@ fn create_persistent_resource_v2() -> Resource {
     }
 }
 
-// Create a sample ephemeral resource in v2 for testing. The unwrap path
+// An ephemeral resource under the current forwarder. The unwrap path
 // constrains the value_ref to the recipient Solana account; the migrate path
 // uses it only as a consumed trigger.
-fn create_ephemeral_resource_v2() -> Resource {
-    let label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID_V2, &SPL_TOKEN_MINT);
+fn create_ephemeral_resource() -> Resource {
+    let label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID, &SPL_TOKEN_MINT);
     let value_ref = calculate_value_ref_from_solana_account(&SOLANA_ACCOUNT);
     let nk_commitment = NullifierKey::from_bytes(NF_KEY_BYTES).commit();
 
@@ -82,42 +82,15 @@ fn create_ephemeral_resource_v2() -> Resource {
     }
 }
 
-// Create a sample persistent resource in v1 for testing.
-fn create_persistent_resource_v1() -> Resource {
-    let label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID_V1, &SPL_TOKEN_MINT);
-    let nk_commitment = NullifierKey::from_bytes(NF_KEY_BYTES).commit();
-    let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
-    let auth_pk = AuthorityVerifyingKey::from_signing_key(&auth_sk);
-    let encryption_sk = SecretKey::new(Scalar::from(ENCRYPTION_SK));
-    let encryption_pk = generate_public_key(encryption_sk.inner());
-    let value_info = ValueInfo {
-        auth_pk,
-        encryption_pk,
-    };
-
-    let value_ref = calculate_persistent_value_ref(&value_info);
-
-    Resource {
-        logic_ref: TransferLogic::verifying_key(),
-        label_ref,
-        value_ref,
-        quantity: QUANTITY,
-        is_ephemeral: false,
-        nk_commitment,
-        ..Default::default()
-    }
-}
-
-// Create a valid migrate resource logic in v2 for testing.
+// A valid migrate resource logic: migrates a resource of the previous forwarder.
 fn create_migrate_resource_logic() -> TransferLogic {
     use anoma_rm_risc0::merkle_path::MerklePath;
-    use transfer_witness::AUTH_SIGNATURE_DOMAIN;
 
-    // Mock a resource to be migrated in v1.
-    let resource_v1 = create_persistent_resource_v1();
+    // The resource being migrated, under the previous forwarder.
+    let migrated_resource = create_persistent_resource(PREVIOUS_FORWARDER_PROGRAM_ID);
 
-    // Create the ephemeral resource in v2 to migrate resource_v1.
-    let self_resource = create_ephemeral_resource_v2();
+    // The ephemeral resource that triggers the migration.
+    let self_resource = create_ephemeral_resource();
 
     // It should be the real root in practice.
     let action_tree_root = Digest::default();
@@ -136,28 +109,26 @@ fn create_migrate_resource_logic() -> TransferLogic {
         self_resource,
         action_tree_root,
         nf_key.clone(),
-        FORWARDER_PROGRAM_ID_V2,
+        FORWARDER_PROGRAM_ID,
         SPL_TOKEN_MINT,
-        resource_v1,
+        migrated_resource,
         nf_key,                // using the same nf_key for simplicity
         MerklePath::default(), // default path; only a real tx/action needs a valid path
         auth_pk,
         encryption_pk,
         auth_sig,
-        FORWARDER_PROGRAM_ID_V1,
+        PREVIOUS_FORWARDER_PROGRAM_ID,
     )
 }
 
 #[test]
-fn test_mint_v2() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
-    let resource = create_ephemeral_resource_v2();
+fn test_mint() {
+    let resource = create_ephemeral_resource();
     let mut resource_logic = TransferLogic::mint_resource_logic_with_wrap_auth(
         resource,
         Digest::default(), // dummy action_tree_root
         NullifierKey::from_bytes(NF_KEY_BYTES),
-        FORWARDER_PROGRAM_ID_V2,
+        FORWARDER_PROGRAM_ID,
         SPL_TOKEN_MINT,
         SOLANA_ACCOUNT,
         WRAP_NONCE,
@@ -175,14 +146,12 @@ fn test_mint_v2() {
 }
 
 #[test]
-fn test_burn_v2() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
-    let resource = create_ephemeral_resource_v2();
+fn test_burn() {
+    let resource = create_ephemeral_resource();
     let mut resource_logic = TransferLogic::burn_resource_logic(
         resource,
         Digest::default(), // dummy action_tree_root
-        FORWARDER_PROGRAM_ID_V2,
+        FORWARDER_PROGRAM_ID,
         SPL_TOKEN_MINT,
         SOLANA_ACCOUNT,
     );
@@ -197,13 +166,11 @@ fn test_burn_v2() {
 }
 
 #[test]
-fn test_transfer_v2() {
-    use anoma_rm_risc0::proving_system::ProofType;
+fn test_transfer() {
     use anoma_rm_risc0_gadgets::encryption::{Ciphertext, random_keypair};
-    use transfer_witness::AUTH_SIGNATURE_DOMAIN;
     use transfer_witness::ResourceWithLabel;
 
-    let consumed_resource = create_persistent_resource_v2();
+    let consumed_resource = create_persistent_resource(FORWARDER_PROGRAM_ID);
 
     let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
     let auth_pk = AuthorityVerifyingKey::from_signing_key(&auth_sk);
@@ -226,7 +193,7 @@ fn test_transfer_v2() {
     let proof = consumed_resource_logic.prove(ProofType::Succinct).unwrap();
     proof.verify().unwrap();
 
-    let created_resource = create_persistent_resource_v2();
+    let created_resource = create_persistent_resource(FORWARDER_PROGRAM_ID);
     let (created_discovery_sk, created_discovery_pk) = random_keypair();
     let created_resource_logic = TransferLogic::create_persistent_resource_logic(
         created_resource,
@@ -234,7 +201,7 @@ fn test_transfer_v2() {
         &created_discovery_pk,
         auth_pk,
         encryption_pk,
-        FORWARDER_PROGRAM_ID_V2,
+        FORWARDER_PROGRAM_ID,
         SPL_TOKEN_MINT,
     );
 
@@ -252,7 +219,7 @@ fn test_transfer_v2() {
     let plaintext = encryption_ciphertext.decrypt(&encryption_sk).unwrap();
     let expected_plaintext = bincode::serialize(&ResourceWithLabel {
         resource: created_resource,
-        forwarder_program_id: FORWARDER_PROGRAM_ID_V2,
+        forwarder_program_id: FORWARDER_PROGRAM_ID,
         spl_token_mint: SPL_TOKEN_MINT,
     })
     .unwrap();
@@ -261,7 +228,7 @@ fn test_transfer_v2() {
     // Deserialize to verify correctness
     let deserialized: ResourceWithLabel = bincode::deserialize(plaintext.as_bytes()).unwrap();
     assert_eq!(
-        deserialized.forwarder_program_id, FORWARDER_PROGRAM_ID_V2,
+        deserialized.forwarder_program_id, FORWARDER_PROGRAM_ID,
         "Forwarder program id mismatch"
     );
     assert_eq!(
@@ -273,8 +240,6 @@ fn test_transfer_v2() {
 
 #[test]
 fn test_positive_migration() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let resource_logic = create_migrate_resource_logic();
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
     proof.verify().unwrap();
@@ -282,8 +247,6 @@ fn test_positive_migration() {
 
 #[test]
 fn test_negative_migration_with_wrong_is_consumed_in_self_resource() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     // Migration must be triggered by a consumed resource.
@@ -293,8 +256,6 @@ fn test_negative_migration_with_wrong_is_consumed_in_self_resource() {
 
 #[test]
 fn test_negative_migration_with_missing_migrate_info() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     resource_logic
@@ -308,8 +269,6 @@ fn test_negative_migration_with_missing_migrate_info() {
 
 #[test]
 fn test_negative_migration_with_wrong_is_ephemeral_in_migrate_info() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     if let Some(migrate_info) = &mut resource_logic
@@ -326,8 +285,6 @@ fn test_negative_migration_with_wrong_is_ephemeral_in_migrate_info() {
 
 #[test]
 fn test_negative_migration_with_wrong_auth_pk_in_value_info() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     if let Some(migrate_info) = &mut resource_logic
@@ -346,8 +303,6 @@ fn test_negative_migration_with_wrong_auth_pk_in_value_info() {
 
 #[test]
 fn test_negative_migration_with_wrong_encryption_pk_in_value_info() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     if let Some(migrate_info) = &mut resource_logic
@@ -366,8 +321,6 @@ fn test_negative_migration_with_wrong_encryption_pk_in_value_info() {
 
 #[test]
 fn test_negative_migration_with_wrong_auth_sig() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     // Wrong auth_sk.
     let mut resource_logic = create_migrate_resource_logic();
     if let Some(migrate_info) = &mut resource_logic
@@ -379,7 +332,7 @@ fn test_negative_migration_with_wrong_auth_sig() {
     {
         let wrong_auth_sk = AuthoritySigningKey::from_bytes(&UNEXPECTED_AUTH_SK).unwrap();
         let wrong_auth_sig = wrong_auth_sk.sign(
-            transfer_witness::AUTH_SIGNATURE_DOMAIN,
+            AUTH_SIGNATURE_DOMAIN,
             resource_logic.witness.action_tree_root.as_bytes(),
         );
         migrate_info.auth_sig = wrong_auth_sig;
@@ -397,10 +350,7 @@ fn test_negative_migration_with_wrong_auth_sig() {
     {
         let wrong_action_tree_root = Digest::from_bytes([10u8; 32]);
         let auth_sk = AuthoritySigningKey::from_bytes(&AUTH_SK).unwrap();
-        let wrong_auth_sig = auth_sk.sign(
-            transfer_witness::AUTH_SIGNATURE_DOMAIN,
-            wrong_action_tree_root.as_bytes(),
-        );
+        let wrong_auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, wrong_action_tree_root.as_bytes());
         migrate_info.auth_sig = wrong_auth_sig;
     }
     resource_logic.prove(ProofType::Succinct).unwrap_err();
@@ -426,8 +376,6 @@ fn test_negative_migration_with_wrong_auth_sig() {
 
 #[test]
 fn test_negative_migration_with_wrong_quantity() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     if let Some(migrate_info) = &mut resource_logic
@@ -444,8 +392,6 @@ fn test_negative_migration_with_wrong_quantity() {
 
 #[test]
 fn test_negative_migration_with_wrong_nf_key() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
     if let Some(migrate_info) = &mut resource_logic
         .witness
@@ -461,8 +407,6 @@ fn test_negative_migration_with_wrong_nf_key() {
 
 #[test]
 fn test_negative_migration_with_wrong_forwarder_id_in_migrate_info() {
-    use anoma_rm_risc0::proving_system::ProofType;
-
     let mut resource_logic = create_migrate_resource_logic();
 
     if let Some(migrate_info) = &mut resource_logic

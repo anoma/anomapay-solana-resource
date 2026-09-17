@@ -2909,12 +2909,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
-name = "token-transfer-guest-v2"
+name = "token-transfer-guest"
 version = "1.0.0"
 dependencies = [
  "borsh",
  "risc0-zkvm",
- "transfer_witness_v2",
+ "transfer_witness",
 ]
 
 [[package]]
@@ -2991,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
@@ -3001,18 +3001,6 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "serde_with",
-]
-
-[[package]]
-name = "transfer_witness_v2"
-version = "1.0.0"
-dependencies = [
- "anoma-pa-solana-client",
- "anoma-rm-risc0",
- "anoma-rm-risc0-gadgets",
- "bincode",
- "serde",
- "transfer_witness",
 ]
 
 [[package]]

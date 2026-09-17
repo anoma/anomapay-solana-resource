@@ -6,7 +6,7 @@ version = "1.0.0"
 [workspace]
 
 # These workspace.dependencies mirror the repository-root Cargo.toml so that
-# transfer_witness/transfer_witness's `{ workspace = true }` deps resolve
+# transfer_witness's `{ workspace = true }` deps resolve
 # correctly when the guest is compiled as a separate workspace by risc0-build.
 # `anoma-pa-solana-client` is intentionally omitted: transfer_witness only uses
 # its dep-free `external_call` types (`default-features = false`), so it resolves

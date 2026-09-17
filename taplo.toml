@@ -9,4 +9,3 @@ include = [
 
 [formatting]
 reorder_keys = true
-style_edition = "2024"

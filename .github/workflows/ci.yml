@@ -39,6 +39,14 @@ jobs:
         working-directory: transfer_circuit
         run: cargo fmt --all --check
 
+      - name: cargo fmt (transfer_circuit/methods)
+        working-directory: transfer_circuit/methods
+        run: cargo fmt --all --check
+
+      - name: cargo fmt (transfer_circuit/methods/guest)
+        working-directory: transfer_circuit/methods/guest
+        run: cargo fmt --all --check
+
       - name: Install taplo
         uses: taiki-e/install-action@v2
         with:
