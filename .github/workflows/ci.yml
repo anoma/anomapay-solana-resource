@@ -109,6 +109,9 @@ jobs:
         run: |
           curl -L https://risczero.com/install | bash
           "$HOME/.risc0/bin/rzup" install cargo-risczero 3.0.5
+          # cargo risczero build checks for a local RISC Zero Rust toolchain
+          # before it starts the Docker builder; 1.88.0 is the builder's own.
+          "$HOME/.risc0/bin/rzup" install rust 1.88.0
           echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
 
       - name: Build the guest in the reproducible builder
