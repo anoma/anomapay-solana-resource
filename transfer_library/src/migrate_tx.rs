@@ -1,4 +1,4 @@
-use crate::TransferLogicV2;
+use crate::TransferLogic;
 use anoma_rm_risc0::{
     ActionExt, CoreDeltaWitness, Digest, TransactionExt,
     action::Action,
@@ -63,7 +63,7 @@ pub fn construct_migrate_tx(
     let compliance_unit = create_compliance_unit(&compliance_witness, ProofType::Groth16)?;
 
     // Generate logic proofs
-    let consumed_resource_logic = TransferLogicV2::migrate_resource_logic(
+    let consumed_resource_logic = TransferLogic::migrate_resource_logic(
         consumed_resource,
         action_tree_root,
         consumed_nf_key,
@@ -79,7 +79,7 @@ pub fn construct_migrate_tx(
     );
     let consumed_logic_proof = consumed_resource_logic.prove(ProofType::Groth16)?;
 
-    let created_resource_logic = TransferLogicV2::create_persistent_resource_logic(
+    let created_resource_logic = TransferLogic::create_persistent_resource_logic(
         created_resource,
         action_tree_root,
         &created_discovery_pk,
@@ -113,8 +113,8 @@ fn simple_migrate_test() {
         authority::{AuthoritySigningKey, AuthorityVerifyingKey},
         encryption::random_keypair,
     };
+    use transfer_witness::AUTH_SIGNATURE_DOMAIN;
     use transfer_witness::{ValueInfo, calculate_label_ref, calculate_persistent_value_ref};
-    use transfer_witness_v2::AUTH_SIGNATURE_DOMAIN_V2;
 
     // Common parameters
     let forwarder_program_id_v1 = [0u8; 32];
@@ -149,7 +149,7 @@ fn simple_migrate_test() {
     // Construct the consumed resource
     let (consumed_nf_key, consumed_nf_cm) = NullifierKey::random_pair();
     let consumed_resource = Resource {
-        logic_ref: TransferLogicV2::verifying_key(),
+        logic_ref: TransferLogic::verifying_key(),
         label_ref: label_ref_v2,
         nk_commitment: consumed_nf_cm,
         quantity,
@@ -172,7 +172,7 @@ fn simple_migrate_test() {
         encryption_pk: created_encryption_pk,
     };
     let created_resource = Resource {
-        logic_ref: TransferLogicV2::verifying_key(),
+        logic_ref: TransferLogic::verifying_key(),
         nk_commitment: created_nf_cm,
         label_ref: label_ref_v2,
         value_ref: calculate_persistent_value_ref(&value_info),
@@ -187,7 +187,7 @@ fn simple_migrate_test() {
     // Generate the authorization signature
     let action_tree = MerkleTree::new(vec![consumed_nf, created_cm]);
     let migrated_auth_sig = migrated_auth_sk.sign(
-        AUTH_SIGNATURE_DOMAIN_V2,
+        AUTH_SIGNATURE_DOMAIN,
         action_tree.root().unwrap().as_bytes(),
     );
 

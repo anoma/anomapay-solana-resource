@@ -24,9 +24,9 @@ if [[ ! -f "$HISTORY" ]]; then
   exit 1
 fi
 
-# Extract the 64-hex VK passed to Digest::from_hex(...) on the TOKEN_TRANSFER_ID
-# line. The line we expect looks like:
-#     Digest::from_hex("5a033ade...768f6")
+# Extract the 64-hex VK passed to Digest::from_hex(...) on the
+# TOKEN_TRANSFER_ID line. The line we expect looks like:
+#     Digest::from_hex("e76734b0...defa65")
 current_vk="$(grep -oE '"[0-9a-f]{64}"' "$LIB_RS" | head -1 | tr -d '"')"
 if [[ -z "$current_vk" ]]; then
   echo "❌ Could not find a 64-hex VK literal in $LIB_RS." >&2

@@ -1,15 +1,15 @@
 # Solana AnomaPay Transfer Resource
 
-Resource logics and zero-knowledge circuits for the **AnomaPay token-transfer
+Resource logic and zero-knowledge circuit for the **AnomaPay token-transfer
 resource** on Solana, targeting the [Anoma Resource Machine (ARM)](https://anoma.net)
 on the [RISC Zero](https://dev.risczero.com) zkVM.
 
-This repository packages the witness types, resource-logic library, and RISC
-Zero guest program that prove the validity of token-transfer resources backed by
-SPL tokens (wrap / unwrap via the SPL token forwarder). It was extracted from the
-AnomaPay backend into a standalone workspace so the proving artifacts (guest ELF,
-`ImageID`, and the Rust APIs around them) can be versioned and reused
-independently of the backend services that consume them.
+This repository packages the witness types, the resource-logic library, and the
+RISC Zero guest program that prove the validity of token-transfer resources
+backed by SPL tokens: wrap and unwrap through the SPL token forwarder, transfers
+between shielded owners, and migration of a resource from the previous
+forwarder. The proving artifacts (guest ELF, `ImageID`, and the Rust APIs around
+them) are versioned here independently of the services that consume them.
 
 ## Layout
 
@@ -21,17 +21,9 @@ not share the host workspace's lockfile or profile.
 ```
 .
 ├── transfer_witness/      # witness data + resource-logic constraints
-├── transfer_witness_v2/   # v2 witness: adds migration support
 ├── transfer_library/      # host API: TransferLogic, embedded guest ELF + ImageID
-├── transfer_library_v2/   # v2 host API: TransferLogicV2 + migration tx builder
-├── transfer_circuit/      # RISC Zero guest program     (excluded workspace)
-└── transfer_circuit_v2/   # v2 RISC Zero guest program  (excluded workspace)
+└── transfer_circuit/      # RISC Zero guest program (excluded workspace)
 ```
-
-The `*_v2` crates mirror their v1 counterparts and add **migration** support for
-moving a v1 resource to v2. They reuse the v1 building blocks directly, so v2 only
-adds what changes: the `Migrate` call type and the migration constraint/forwarder
-call. See [`transfer_witness_v2`](transfer_witness_v2) for details.
 
 ### Dependency graph
 
@@ -44,27 +36,27 @@ transfer_witness ──► transfer_library ──► transfer_circuit
 - `transfer_library` **embeds the prebuilt guest ELF** (`include_bytes!`) and
   exposes the matching `ImageID`, so a host can verify proofs without rebuilding
   the guest.
-- `transfer_circuit` is the guest *source* — used to (re)produce that ELF — and
-  depends on the witness/library crates by relative path.
+- `transfer_circuit` is the guest *source*, used to (re)produce that ELF, and
+  depends on the witness crate by relative path.
 
 ## Crates
 
 ### `transfer_witness`
-Defines `TokenTransferWitness`: the full set of inputs needed to prove the
-resource logic of a single consumed or created resource (the resource itself,
-nullifier key, authorization signature, encryption info, forwarder/wrap-auth
-data, label and value info). Implements the ARM `LogicCircuit` constraint
-function that the guest executes, including the wrap/unwrap external-call
-encoding for the SPL token forwarder. Wrapping is authorized by an Ed25519
-signature (`WrapAuthInfo`).
+Defines `TokenTransferWitness`: the inputs needed to prove the resource logic of
+one consumed or created resource (the resource itself, nullifier key,
+authorization signature, encryption info, forwarder call data, label and value
+info). Implements the ARM `LogicCircuit` constraint function the guest executes,
+including the wrap, unwrap and migrate external-call encodings for the SPL token
+forwarder. Wrapping is authorized by an Ed25519 signature carried in the
+settlement transaction (`WrapAuthInfo` names the instruction).
 
 ### `transfer_library`
 Host-side proving API. `TransferLogic` wraps `TokenTransferWitness` with
-constructors for the supported flows (consume/create persistent resources, mint
-via wrap, burn via unwrap) and implements ARM's `LogicProver`. Embeds the guest
-ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
+constructors for the supported flows (consume and create persistent resources,
+mint via wrap, burn via unwrap, migrate) and implements ARM's `LogicProver`.
+Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
 [`transfer_library/VK_HISTORY.md`](transfer_library/VK_HISTORY.md) for the
-verifying-key rollback/migration record.
+verifying-key history and the migration record of every rotation.
 
 ### `transfer_circuit`
 The RISC Zero guest program and its `methods` build crate. The guest reads a
@@ -81,7 +73,7 @@ cargo build
 ```
 
 Rebuilding the guest requires the [RISC Zero toolchain](https://dev.risczero.com)
-and is done from the excluded `transfer_circuit` workspace.
+and is done from the excluded `transfer_circuit` workspace; see its README.
 
 ## Testing
 
@@ -93,3 +85,18 @@ them with fast (non-cryptographic) proofs:
 ```
 RISC0_DEV_MODE=1 cargo test --workspace
 ```
+
+## CI
+
+`.github/workflows/ci.yml` checks that `TOKEN_TRANSFER_ID` is recorded in
+`VK_HISTORY.md`, formats (rustfmt in both workspaces, taplo), builds, runs the
+dev-mode tests, and runs clippy.
+
+## Versioning
+
+The workspace crates (`transfer_witness`, `transfer_library`) share the version
+in `[workspace.package]`. The circuit crates are versioned independently.
+
+## License
+
+GPL-3.0.

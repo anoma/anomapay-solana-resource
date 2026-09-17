@@ -1,7 +1,7 @@
-//! Host binary that builds the RISC Zero guest (via the `token-transfer-methods`
-//! build script) and reports its `ImageID`/ELF. Run with `--dump-elf <path>` to
-//! write the guest ELF that `transfer_library` embeds; otherwise it prints the
-//! image ID (hex) and ELF size.
+//! Host binary that builds the v2 RISC Zero guest (via the
+//! `token-transfer-methods` build script) and reports its `ImageID`/ELF. Run
+//! with `--dump-elf <path>` to write the guest ELF that `transfer_library`
+//! embeds; otherwise it prints the image ID (hex) and ELF size.
 
 use std::io::Write;
 

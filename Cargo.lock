@@ -4809,21 +4809,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "1.0.0"
-dependencies = [
- "anoma-rm-risc0",
- "anoma-rm-risc0-gadgets",
- "bincode",
- "hex",
- "k256",
- "lazy_static",
- "serde",
- "transfer_witness",
-]
-
-[[package]]
-name = "transfer_library_v2"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
@@ -4834,12 +4820,11 @@ dependencies = [
  "serde",
  "sha3 0.10.9",
  "transfer_witness",
- "transfer_witness_v2",
 ]
 
 [[package]]
 name = "transfer_witness"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
@@ -4849,18 +4834,6 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "serde_with",
-]
-
-[[package]]
-name = "transfer_witness_v2"
-version = "1.0.0"
-dependencies = [
- "anoma-pa-solana-client",
- "anoma-rm-risc0",
- "anoma-rm-risc0-gadgets",
- "bincode",
- "serde",
- "transfer_witness",
 ]
 
 [[package]]

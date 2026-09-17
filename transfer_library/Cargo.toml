@@ -1,6 +1,6 @@
 [package]
 authors.workspace = true
-description = "Host-side proving API for the AnomaPay Solana token-transfer resource."
+description = "Host-side proving API for the AnomaPay Solana token-transfer resource: witness constructors and the embedded guest ELF/ImageID."
 edition.workspace = true
 license.workspace = true
 name = "transfer_library"
@@ -21,6 +21,7 @@ k256 = { workspace = true, features = [
 ] }
 lazy_static = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+sha3 = { workspace = true }
 transfer_witness = { workspace = true }
 
 [dev-dependencies]
