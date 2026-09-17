@@ -29,18 +29,24 @@ checked-in source.
 
 ## Required invariants
 
-1. **Pin every git dependency by exact `rev` in the root `Cargo.toml`.** The
+1. **Pin arm-risc0 with the same source the Solana adapter pins (today
+   `branch = "main"`), and let the committed lockfiles fix the rev.** Cargo
+   treats `?branch=main` and `?rev=<sha>` of the same commit as two sources and
+   links both copies of the crates, so a consumer that pins arm-risc0 one way
+   cannot share types with a crate that pins it the other way; the adapter's
+   fixture generator depends on `transfer_library`, so the two must agree. The
    guest depends on `transfer_witness` by path, and cargo resolves that crate's
    `{ workspace = true }` dependencies against the repository root, so the root
-   pins govern the guest too. A `branch = "..."` pin re-resolves to the branch
-   head whenever the lockfile is regenerated, so a branch pin silently rotates
-   the VK.
+   pin governs the guest too. Because a branch pin re-resolves whenever a
+   lockfile is regenerated, never regenerate a lockfile blindly (invariant 3);
+   the committed locks are the rev pin.
 
 2. **Any change of a git dependency's source id rotates the VK.** Cargo derives
    each crate's metadata hash from its package id, which includes the git URL,
-   branch or tag, and rev. Moving a pin from a branch to a tag, or to a newer
-   rev, changes the arm crates' symbol hashes and therefore the ELF, even when
-   their source is byte-identical. Plan every re-pin as a rotation with its own
+   branch or tag, and rev. Moving a pin from a branch to a tag, from a rev to a
+   branch, or to a newer rev, changes the arm crates' symbol hashes and
+   therefore the ELF, even when their source is byte-identical. Plan every
+   re-pin, including the lockfile's rev, as a rotation with its own
    `VK_HISTORY.md` row.
 
 3. **Commit BOTH lockfiles (root and guest) with `rev=` git sources and

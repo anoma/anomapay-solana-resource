@@ -242,7 +242,7 @@ dependencies = [
 [[package]]
 name = "anoma-rm-core"
 version = "2.0.0-rc.5"
-source = "git+https://github.com/anoma/arm-risc0?rev=5085021fffd2ce25e161010c8e2d67ff62b5a7de#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
+source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "bincode",
  "bytemuck",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "anoma-rm-risc0"
 version = "2.0.0-rc.5"
-source = "git+https://github.com/anoma/arm-risc0?rev=5085021fffd2ce25e161010c8e2d67ff62b5a7de#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
+source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "anoma-rm-core",
  "bincode",
@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "anoma-rm-risc0-gadgets"
 version = "2.0.0-rc.5"
-source = "git+https://github.com/anoma/arm-risc0?rev=5085021fffd2ce25e161010c8e2d67ff62b5a7de#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
+source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "aes-gcm",
  "alloy-primitives",
