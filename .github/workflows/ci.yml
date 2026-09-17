@@ -98,3 +98,38 @@ jobs:
 
       - name: cargo clippy (workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  guest-reproducibility:
+    name: Rebuild the guest and check TOKEN_TRANSFER_ID
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-risczero
+        run: |
+          curl -L https://risczero.com/install | bash
+          "$HOME/.risc0/bin/rzup" install cargo-risczero 3.0.5
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+
+      - name: Build the guest in the reproducible builder
+        id: build
+        run: |
+          out="$(cargo risczero build --manifest-path transfer_circuit/methods/guest/Cargo.toml 2>&1 | tee /dev/stderr)"
+          image_id="$(printf '%s\n' "$out" | grep 'ImageID:' | sed 's/ImageID: \([0-9a-f]*\).*/\1/')"
+          if [[ -z "$image_id" ]]; then
+            echo "❌ cargo risczero build printed no ImageID" >&2
+            exit 1
+          fi
+          echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
+
+      - name: Compare with TOKEN_TRANSFER_ID
+        run: |
+          expected="$(grep -oE '"[0-9a-f]{64}"' transfer_library/src/lib.rs | tr -d '"')"
+          built="${{ steps.build.outputs.image_id }}"
+          if [[ "$built" != "$expected" ]]; then
+            echo "❌ The guest built from source has image id $built, but transfer_library pins $expected." >&2
+            echo "   Rebuild with cargo risczero build, embed the ELF, and record the rotation in VK_HISTORY.md." >&2
+            exit 1
+          fi
+          cmp transfer_circuit/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/token-transfer-guest.bin transfer_library/elf/token-transfer-guest.bin
+          echo "✅ TOKEN_TRANSFER_ID $built reproduces from source and the embedded ELF matches"
