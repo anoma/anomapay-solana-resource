@@ -5,10 +5,13 @@
 // set it when running these locally.
 use anoma_rm_risc0::{
     Digest,
+    compliance::hash_kind_table_entries,
     logic_proof::{LogicProver, get_instance, verify},
+    merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::ProofType,
     resource::Resource,
+    transaction::Transaction,
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
@@ -16,10 +19,11 @@ use anoma_rm_risc0_gadgets::{
 };
 use k256::{AffinePoint, Scalar};
 use transfer_witness::{
-    AUTH_SIGNATURE_DOMAIN, ResourceWithLabel, ValueInfo, calculate_label_ref,
+    AUTH_SIGNATURE_DOMAIN, LabelInfo, ResourceWithLabel, ValueInfo, calculate_label_ref,
     calculate_persistent_value_ref, calculate_value_ref_from_solana_account,
 };
 
+use crate::action::{ComplianceParams, Owner, WrapAuth, unwrap, wrap};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 
 const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
@@ -201,4 +205,81 @@ fn test_transfer() {
     assert_eq!(deserialized.resource, created_resource);
     assert_eq!(deserialized.forwarder_program_id, FORWARDER_PROGRAM_ID);
     assert_eq!(deserialized.spl_token_mint, SPL_TOKEN_MINT);
+}
+
+/// The deployment facts of the action tests: a fixed commitment randomness
+/// and the empty kind table the adapter pins today.
+fn compliance_params() -> ComplianceParams {
+    ComplianceParams {
+        rcv: Scalar::ONE.to_bytes().to_vec(),
+        kind_table: vec![],
+    }
+}
+
+fn tags_of(tx: &Transaction) -> Vec<Digest> {
+    tx.actions.as_ref().unwrap()[0]
+        .logic_verifier_inputs
+        .iter()
+        .map(|input| input.tag)
+        .collect()
+}
+
+/// A wrap creates the owner's resource; the unwrap of that resource releases
+/// its quantity to the recipient. Both actions prove against the embedded
+/// guest and balance.
+#[test]
+fn wrap_then_unwrap_actions_prove_and_balance() {
+    let (auth_sk, auth_pk, _, encryption_pk) = owner_keys();
+    let owner = Owner {
+        auth_pk,
+        encryption_pk,
+        nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
+    };
+    let label = LabelInfo {
+        forwarder_program_id: FORWARDER_PROGRAM_ID,
+        spl_token_mint: SPL_TOKEN_MINT,
+    };
+    let kind_table_commitment = hash_kind_table_entries(&[]);
+
+    let wrap = wrap(label.clone(), QUANTITY as u64, [5u8; 32], &owner, [6u8; 32]).unwrap();
+    assert_eq!(wrap.created.value_ref, owner.value_ref());
+    assert_eq!(wrap.created.quantity, QUANTITY);
+    let auth = WrapAuth {
+        user: SOLANA_ACCOUNT,
+        nonce: WRAP_NONCE,
+        deadline: WRAP_DEADLINE,
+        ed25519_ix_index: ED25519_IX_INDEX,
+    };
+    // base64 of a 32-byte hash: what the wallet signs.
+    assert_eq!(wrap.signed_message(&auth).len(), 44);
+    let (_, discovery_pk) = random_keypair();
+    let wrap_tx = wrap
+        .action(&auth, &owner, &discovery_pk, compliance_params())
+        .prove(ProofType::Succinct)
+        .unwrap();
+    anoma_rm_risc0::transaction::verify(&wrap_tx, kind_table_commitment).unwrap();
+    assert_eq!(
+        tags_of(&wrap_tx),
+        vec![wrap.consumed_nf, wrap.created.commitment()]
+    );
+
+    let unwrap = unwrap(label, wrap.created, &owner.nf_key, SOLANA_ACCOUNT).unwrap();
+    assert_eq!(unwrap.created.quantity, QUANTITY);
+    assert_eq!(
+        unwrap.created.value_ref,
+        calculate_value_ref_from_solana_account(&SOLANA_ACCOUNT)
+    );
+    let auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, unwrap.action_tree_root.as_bytes());
+    let unwrap_tx = unwrap
+        .action(&owner, auth_sig, MerklePath::empty(), compliance_params())
+        .prove(ProofType::Succinct)
+        .unwrap();
+    anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_table_commitment).unwrap();
+    assert_eq!(
+        tags_of(&unwrap_tx),
+        vec![
+            wrap.created.nullifier(&owner.nf_key).unwrap(),
+            unwrap.created.commitment()
+        ]
+    );
 }

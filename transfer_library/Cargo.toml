@@ -8,6 +8,7 @@ readme = "README.md"
 version.workspace = true
 
 [dependencies]
+anoma-pa-solana-client = { workspace = true }
 anoma-rm-risc0 = { workspace = true, features = ["transaction", "prove"] }
 anoma-rm-risc0-gadgets = { workspace = true }
 hex = { workspace = true }
@@ -16,6 +17,5 @@ serde = { workspace = true, features = ["derive"] }
 transfer_witness = { workspace = true }
 
 [dev-dependencies]
-anoma-pa-solana-client = { workspace = true }
 bincode = { workspace = true }
 risc0-zkvm = "3.0.3"

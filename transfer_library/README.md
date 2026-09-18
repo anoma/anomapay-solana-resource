@@ -15,6 +15,17 @@ constructors build the witness for each supported flow:
 | `mint_resource_logic_with_wrap_auth` | consumed ephemeral | wrap SPL tokens (Ed25519 authorization) |
 | `burn_resource_logic` | created ephemeral | unwrap SPL tokens to a recipient |
 
+## Actions
+
+`action::wrap` and `action::unwrap` build a flow's resources from its keys and
+terms: the ephemeral resource a wrap consumes and the owner's shielded resource
+it creates, or the shielded resource an unwrap consumes and the ephemeral one it
+creates for the recipient. `Wrap::signed_message` is the text the user's wallet
+signs, and `Wrap::action` / `Unwrap::action` produce a `TransferAction`: the
+compliance witness and both transfer-logic witnesses, in tag order, which
+`TransferAction::prove` turns into a balanced transaction in-process, or which a
+caller with its own prover (a proving queue, a mock prover) proves itself.
+
 ## Guest artifacts
 
 `TOKEN_TRANSFER_ELF` is the prebuilt guest (`elf/token-transfer-guest.bin`) and

@@ -2,8 +2,10 @@
 //! the AnomaPay token-transfer resource.
 //!
 //! Of particular interest are the `TransferLogic` struct and the
-//! `TokenTransferWitness` it wraps.
+//! `TokenTransferWitness` it wraps, and the [`action`] module that builds the
+//! wrap and unwrap actions from resources and keys.
 
+pub mod action;
 #[cfg(test)]
 mod test;
 

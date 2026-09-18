@@ -52,8 +52,11 @@ settlement transaction (`WrapAuthInfo` names the instruction).
 ### `transfer_library`
 Host-side proving API. `TransferLogic` wraps `TokenTransferWitness` with
 constructors for the supported flows (consume and create persistent resources,
-mint via wrap, burn via unwrap) and implements ARM's `LogicProver`.
-Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
+mint via wrap, burn via unwrap) and implements ARM's `LogicProver`. The
+`action` module builds a whole wrap or unwrap from keys and amounts: the
+resources it consumes and creates, the message the user signs, and the
+compliance and logic witnesses of the action, proven in-process or by the
+caller's prover. Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
 [`transfer_library/VK_HISTORY.md`](transfer_library/VK_HISTORY.md) for the
 verifying-key history and the migration record of every rotation.
 
