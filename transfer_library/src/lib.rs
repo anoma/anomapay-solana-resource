@@ -29,7 +29,7 @@ pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-gues
 
 /// The identity of the binary that executes the proofs in the zkvm.
 pub static TOKEN_TRANSFER_ID: LazyLock<Digest> = LazyLock::new(|| {
-    Digest::from_hex("880569c12ea6b178d7c7c751201a8d35ca337eb34239d387ef78d4cbd7e489f8").unwrap()
+    Digest::from_hex("7171ae21c90bef5120bb9cfe922e71bb2556df4d279cec5e0015e4aca33bb1e8").unwrap()
 });
 
 /// Holds the transfer resource logic.

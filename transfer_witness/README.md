@@ -48,7 +48,7 @@ on the resource:
 
 ## `call_type`
 
-`CallType { Wrap, Unwrap }` and the account count of each call's CPI segment
-(`WRAP_SEGMENT_NUM_ACCOUNTS`, `UNWRAP_SEGMENT_NUM_ACCOUNTS`). The op codes and
-instruction-data encoders are owned by `anoma-pa-solana-client`, so the circuit
-and the on-chain forwarder agree byte for byte.
+`CallType { Wrap, Unwrap }`. The op codes, the instruction-data encoders and
+the account count of each call's CPI segment are owned by
+`anoma-pa-solana-client`, so the circuit and the on-chain forwarder agree byte
+for byte.

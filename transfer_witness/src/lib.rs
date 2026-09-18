@@ -4,7 +4,10 @@
 //! shielded owners.
 pub mod call_type;
 
-use crate::call_type::{CallType, UNWRAP_SEGMENT_NUM_ACCOUNTS, WRAP_SEGMENT_NUM_ACCOUNTS};
+use crate::call_type::CallType;
+use anoma_pa_solana_client::constants::{
+    FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+};
 use anoma_pa_solana_client::external_call::{
     OutputMode, SolanaExternalCall, encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
 };
@@ -224,7 +227,7 @@ impl TokenTransferWitness {
                     action_root,
                     wrap_auth.ed25519_ix_index,
                 );
-                (inputs, WRAP_SEGMENT_NUM_ACCOUNTS)
+                (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
             }
             CallType::Unwrap => {
                 if self.is_consumed {
@@ -250,7 +253,7 @@ impl TokenTransferWitness {
                     spl_amount_from_quantity(self.resource.quantity)?,
                     solana_account,
                 );
-                (inputs, UNWRAP_SEGMENT_NUM_ACCOUNTS)
+                (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
             }
         };
 
@@ -411,7 +414,9 @@ pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::call_type::{UNWRAP_SEGMENT_NUM_ACCOUNTS, WRAP_SEGMENT_NUM_ACCOUNTS};
+    use anoma_pa_solana_client::constants::{
+        FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+    };
     use anoma_pa_solana_client::external_call::{OP_UNWRAP, OP_WRAP};
     use anoma_rm_risc0::utils::words_to_bytes;
 
@@ -469,7 +474,7 @@ mod tests {
     fn wrap_external_call_commits_the_forwarder_segment() {
         let call = witness_external_call(wrap_witness(u64::MAX as u128));
         assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
-        assert_eq!(call.num_accounts, WRAP_SEGMENT_NUM_ACCOUNTS);
+        assert_eq!(call.num_accounts, FORWARDER_WRAP_NUM_ACCOUNTS);
         assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
         assert_eq!(call.output_mode, OutputMode::ReturnData);
         assert_eq!(call.instruction_data[0], OP_WRAP);
@@ -491,7 +496,7 @@ mod tests {
     fn unwrap_external_call_commits_the_forwarder_segment() {
         let call = witness_external_call(unwrap_witness(u64::MAX as u128));
         assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
-        assert_eq!(call.num_accounts, UNWRAP_SEGMENT_NUM_ACCOUNTS);
+        assert_eq!(call.num_accounts, FORWARDER_UNWRAP_NUM_ACCOUNTS);
         assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
         assert_eq!(call.output_mode, OutputMode::ReturnData);
         assert_eq!(call.instruction_data[0], OP_UNWRAP);
