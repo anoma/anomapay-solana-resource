@@ -39,14 +39,6 @@ jobs:
         working-directory: transfer_circuit
         run: cargo fmt --all --check
 
-      - name: cargo fmt (transfer_circuit/methods)
-        working-directory: transfer_circuit/methods
-        run: cargo fmt --all --check
-
-      - name: cargo fmt (transfer_circuit/methods/guest)
-        working-directory: transfer_circuit/methods/guest
-        run: cargo fmt --all --check
-
       - name: Install taplo
         uses: taiki-e/install-action@v2
         with:
@@ -119,11 +111,11 @@ jobs:
           echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
 
       - name: Build the guest in the reproducible builder
-        run: cargo risczero build --manifest-path transfer_circuit/methods/guest/Cargo.toml
+        run: cargo risczero build --manifest-path transfer_circuit/Cargo.toml
 
       - name: Compare with the embedded guest
         run: |
-          built=transfer_circuit/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/token-transfer-guest.bin
+          built=transfer_circuit/target/riscv32im-risc0-zkvm-elf/docker/token-transfer-guest.bin
           if ! cmp "$built" transfer_library/elf/token-transfer-guest.bin; then
             echo "❌ The guest built from source differs from transfer_library/elf/token-transfer-guest.bin." >&2
             echo "   Rebuild with cargo risczero build, embed the ELF, set TOKEN_TRANSFER_ID, record the rotation in VK_HISTORY.md." >&2

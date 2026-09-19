@@ -21,7 +21,7 @@ not share the host workspace's lockfile or profile.
 .
 ├── transfer_witness/      # witness data + resource-logic constraints
 ├── transfer_library/      # host API: TransferLogic, embedded guest ELF + ImageID
-└── transfer_circuit/      # RISC Zero guest program (excluded workspace)
+└── transfer_circuit/      # RISC Zero guest program (excluded package)
 ```
 
 ### Dependency graph
@@ -61,9 +61,8 @@ caller's prover. Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image
 verifying-key history and the migration record of every rotation.
 
 ### `transfer_circuit`
-The RISC Zero guest program and its `methods` build crate. The guest reads a
-`TokenTransferWitness`, runs `constrain()`, and commits the resulting
-`LogicInstance`.
+The RISC Zero guest program. It reads a `TokenTransferWitness`, runs
+`constrain()`, and commits the resulting `LogicInstance`.
 
 ## Building
 
@@ -75,7 +74,8 @@ cargo build
 ```
 
 Rebuilding the guest requires the [RISC Zero toolchain](https://dev.risczero.com)
-and is done from the excluded `transfer_circuit` workspace; see its README.
+and the reproducible builder; see
+[`transfer_library/BUILDING_THE_VK.md`](transfer_library/BUILDING_THE_VK.md).
 
 ## Testing
 
@@ -88,16 +88,10 @@ them with fast (non-cryptographic) proofs:
 RISC0_DEV_MODE=1 cargo test --workspace
 ```
 
-## CI
-
-`.github/workflows/ci.yml` checks that `TOKEN_TRANSFER_ID` is recorded in
-`VK_HISTORY.md`, formats (rustfmt in the host workspace and in each circuit workspace, taplo), builds, runs the
-dev-mode tests, and runs clippy.
-
 ## Versioning
 
 The workspace crates (`transfer_witness`, `transfer_library`) share the version
-in `[workspace.package]`. The circuit crates are versioned independently.
+in `[workspace.package]`. The circuit crate is versioned independently.
 
 ## License
 

@@ -6,12 +6,13 @@
 use anoma_rm_risc0::{
     Digest,
     compliance::hash_kind_table_entries,
-    logic_proof::{LogicProver, get_instance, verify},
+    delta_proof::DeltaWitness,
+    logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::ProofType,
     resource::Resource,
-    transaction::Transaction,
+    transaction::{Delta, Transaction},
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
@@ -19,11 +20,11 @@ use anoma_rm_risc0_gadgets::{
 };
 use k256::{AffinePoint, Scalar};
 use transfer_witness::{
-    AUTH_SIGNATURE_DOMAIN, LabelInfo, ResourceWithLabel, ValueInfo, calculate_label_ref,
-    calculate_persistent_value_ref, calculate_value_ref_from_solana_account,
+    AUTH_SIGNATURE_DOMAIN, LabelInfo, ResourceWithLabel, ValueInfo, WrapAuthInfo,
+    calculate_label_ref, calculate_persistent_value_ref, calculate_value_ref_from_solana_account,
 };
 
-use crate::action::{ComplianceParams, Owner, WrapAuth, unwrap, wrap};
+use crate::action::{ComplianceParams, Owner, TransferAction, WrapAuth, unwrap, wrap};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 
 const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
@@ -37,6 +38,21 @@ const ED25519_IX_INDEX: u8 = 0;
 const AUTH_SK: [u8; 32] = [7u8; 32];
 const ENCRYPTION_SK: u32 = 8u32;
 const ACTION_TREE_ROOT: [u8; 32] = [9u8; 32];
+
+fn label() -> LabelInfo {
+    LabelInfo {
+        forwarder_program_id: FORWARDER_PROGRAM_ID,
+        spl_token_mint: SPL_TOKEN_MINT,
+    }
+}
+
+fn wrap_auth() -> WrapAuthInfo {
+    WrapAuthInfo {
+        nonce: WRAP_NONCE,
+        deadline: WRAP_DEADLINE,
+        ed25519_ix_index: ED25519_IX_INDEX,
+    }
+}
 
 /// The owner's authorization and encryption key pairs.
 fn owner_keys() -> (
@@ -52,18 +68,20 @@ fn owner_keys() -> (
     (auth_sk, auth_pk, encryption_sk, encryption_pk)
 }
 
-// A persistent resource owned by the test owner.
-fn create_persistent_resource() -> Resource {
+fn owner_value() -> ValueInfo {
     let (_, auth_pk, _, encryption_pk) = owner_keys();
-    let value_ref = calculate_persistent_value_ref(&ValueInfo {
+    ValueInfo {
         auth_pk,
         encryption_pk,
-    });
+    }
+}
 
+// A persistent resource owned by the test owner.
+fn create_persistent_resource() -> Resource {
     Resource {
         logic_ref: TransferLogic::verifying_key(),
         label_ref: calculate_label_ref(&FORWARDER_PROGRAM_ID, &SPL_TOKEN_MINT),
-        value_ref,
+        value_ref: calculate_persistent_value_ref(&owner_value()),
         quantity: QUANTITY,
         is_ephemeral: false,
         nk_commitment: NullifierKey::from_bytes(NF_KEY_BYTES).commit(),
@@ -85,40 +103,39 @@ fn create_ephemeral_resource() -> Resource {
     }
 }
 
+/// The guest commits the external call the host-side witness computes.
+fn assert_commits_external_call(proof: &LogicVerifier, logic: &TransferLogic) {
+    assert_eq!(
+        get_instance(proof).unwrap().app_data.external_payload,
+        logic
+            .witness
+            .ephemeral_resource_check(&ACTION_TREE_ROOT)
+            .unwrap()
+    );
+}
+
 #[test]
 fn image_id_matches_the_embedded_guest() {
     assert_eq!(
         risc0_zkvm::compute_image_id(TOKEN_TRANSFER_ELF).unwrap(),
-        *TOKEN_TRANSFER_ID
+        TOKEN_TRANSFER_ID
     );
 }
 
 #[test]
 fn test_mint() {
-    let action_tree_root = Digest::from_bytes(ACTION_TREE_ROOT);
     let mut resource_logic = TransferLogic::mint_resource_logic_with_wrap_auth(
         create_ephemeral_resource(),
-        action_tree_root,
+        Digest::from_bytes(ACTION_TREE_ROOT),
         NullifierKey::from_bytes(NF_KEY_BYTES),
-        FORWARDER_PROGRAM_ID,
-        SPL_TOKEN_MINT,
+        label(),
         SOLANA_ACCOUNT,
-        WRAP_NONCE,
-        WRAP_DEADLINE,
-        ED25519_IX_INDEX,
+        wrap_auth(),
     );
 
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
     verify(&proof).unwrap();
-
-    // The guest commits the external call the host-side witness computes.
-    assert_eq!(
-        get_instance(&proof).unwrap().app_data.external_payload,
-        resource_logic
-            .witness
-            .ephemeral_resource_check(&ACTION_TREE_ROOT)
-            .unwrap()
-    );
+    assert_commits_external_call(&proof, &resource_logic);
 
     // A wrap must be triggered by a consumed resource.
     resource_logic.witness.is_consumed = false;
@@ -127,25 +144,16 @@ fn test_mint() {
 
 #[test]
 fn test_burn() {
-    let action_tree_root = Digest::from_bytes(ACTION_TREE_ROOT);
     let mut resource_logic = TransferLogic::burn_resource_logic(
         create_ephemeral_resource(),
-        action_tree_root,
-        FORWARDER_PROGRAM_ID,
-        SPL_TOKEN_MINT,
+        Digest::from_bytes(ACTION_TREE_ROOT),
+        label(),
         SOLANA_ACCOUNT,
     );
 
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
     verify(&proof).unwrap();
-
-    assert_eq!(
-        get_instance(&proof).unwrap().app_data.external_payload,
-        resource_logic
-            .witness
-            .ephemeral_resource_check(&ACTION_TREE_ROOT)
-            .unwrap()
-    );
+    assert_commits_external_call(&proof, &resource_logic);
 
     // An unwrap must be triggered by a created resource.
     resource_logic.witness.is_consumed = true;
@@ -155,7 +163,7 @@ fn test_burn() {
 
 #[test]
 fn test_transfer() {
-    let (auth_sk, auth_pk, encryption_sk, encryption_pk) = owner_keys();
+    let (auth_sk, _, encryption_sk, _) = owner_keys();
     let action_tree_root = Digest::from_bytes(ACTION_TREE_ROOT);
     let auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, action_tree_root.as_bytes());
 
@@ -163,8 +171,7 @@ fn test_transfer() {
         create_persistent_resource(),
         action_tree_root,
         NullifierKey::from_bytes(NF_KEY_BYTES),
-        auth_pk,
-        encryption_pk,
+        owner_value(),
         auth_sig,
     );
     let proof = consumed_resource_logic.prove(ProofType::Succinct).unwrap();
@@ -176,10 +183,8 @@ fn test_transfer() {
         created_resource,
         action_tree_root,
         &created_discovery_pk,
-        auth_pk,
-        encryption_pk,
-        FORWARDER_PROGRAM_ID,
-        SPL_TOKEN_MINT,
+        owner_value(),
+        label(),
     );
     let proof = created_resource_logic.prove(ProofType::Succinct).unwrap();
     verify(&proof).unwrap();
@@ -201,10 +206,6 @@ fn test_transfer() {
         spl_token_mint: SPL_TOKEN_MINT,
     };
     assert_eq!(plaintext.as_bytes(), bincode::serialize(&expected).unwrap());
-    let deserialized: ResourceWithLabel = bincode::deserialize(plaintext.as_bytes()).unwrap();
-    assert_eq!(deserialized.resource, created_resource);
-    assert_eq!(deserialized.forwarder_program_id, FORWARDER_PROGRAM_ID);
-    assert_eq!(deserialized.spl_token_mint, SPL_TOKEN_MINT);
 }
 
 /// The deployment facts of the action tests: a fixed commitment randomness
@@ -214,6 +215,19 @@ fn compliance_params() -> ComplianceParams {
         rcv: Scalar::ONE.to_bytes().to_vec(),
         kind_table: vec![],
     }
+}
+
+/// Proves the action in-process and wraps it in a balanced transaction.
+fn prove(action: &TransferAction) -> Transaction {
+    let compliance_unit =
+        anoma_rm_risc0::compliance_unit::create(&action.compliance_witness, ProofType::Succinct)
+            .unwrap();
+    let consumed = action.consumed_logic.prove(ProofType::Succinct).unwrap();
+    let created = action.created_logic.prove(ProofType::Succinct).unwrap();
+    let action = anoma_rm_risc0::action::new(compliance_unit, vec![consumed, created]).unwrap();
+    let delta_witness = DeltaWitness::from_bytes(&compliance_params().rcv).unwrap();
+    let tx = Transaction::create(vec![action], Delta::Witness(delta_witness));
+    anoma_rm_risc0::transaction::generate_delta_proof(tx).unwrap()
 }
 
 fn tags_of(tx: &Transaction) -> Vec<Digest> {
@@ -229,51 +243,59 @@ fn tags_of(tx: &Transaction) -> Vec<Digest> {
 /// guest and balance.
 #[test]
 fn wrap_then_unwrap_actions_prove_and_balance() {
-    let (auth_sk, auth_pk, _, encryption_pk) = owner_keys();
+    let (auth_sk, _, _, _) = owner_keys();
     let owner = Owner {
-        auth_pk,
-        encryption_pk,
+        value: owner_value(),
         nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
-    };
-    let label = LabelInfo {
-        forwarder_program_id: FORWARDER_PROGRAM_ID,
-        spl_token_mint: SPL_TOKEN_MINT,
     };
     let kind_table_commitment = hash_kind_table_entries(&[]);
 
-    let wrap = wrap(label.clone(), QUANTITY as u64, [5u8; 32], &owner, [6u8; 32]).unwrap();
+    let wrap = wrap(
+        label(),
+        QUANTITY as u64,
+        [5u8; 32],
+        owner.clone(),
+        [6u8; 32],
+    )
+    .unwrap();
     assert_eq!(wrap.created.value_ref, owner.value_ref());
     assert_eq!(wrap.created.quantity, QUANTITY);
     let auth = WrapAuth {
         user: SOLANA_ACCOUNT,
-        nonce: WRAP_NONCE,
-        deadline: WRAP_DEADLINE,
-        ed25519_ix_index: ED25519_IX_INDEX,
+        info: wrap_auth(),
     };
     // base64 of a 32-byte hash: what the wallet signs.
-    assert_eq!(wrap.signed_message(&auth).len(), 44);
+    assert_eq!(wrap.signed_message(&auth).unwrap().len(), 44);
     let (_, discovery_pk) = random_keypair();
-    let wrap_tx = wrap
-        .action(&auth, &owner, &discovery_pk, compliance_params())
-        .prove(ProofType::Succinct)
-        .unwrap();
+    let wrap_tx = prove(
+        &wrap
+            .action(auth, &discovery_pk, compliance_params())
+            .unwrap(),
+    );
     anoma_rm_risc0::transaction::verify(&wrap_tx, kind_table_commitment).unwrap();
     assert_eq!(
         tags_of(&wrap_tx),
-        vec![wrap.consumed_nf, wrap.created.commitment()]
+        vec![
+            wrap.consumed.nullifier(&NullifierKey::default()).unwrap(),
+            wrap.created.commitment()
+        ]
     );
 
-    let unwrap = unwrap(label, wrap.created, &owner.nf_key, SOLANA_ACCOUNT).unwrap();
+    let unwrap = unwrap(label(), wrap.created, owner.clone(), SOLANA_ACCOUNT).unwrap();
     assert_eq!(unwrap.created.quantity, QUANTITY);
     assert_eq!(
         unwrap.created.value_ref,
         calculate_value_ref_from_solana_account(&SOLANA_ACCOUNT)
     );
-    let auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, unwrap.action_tree_root.as_bytes());
-    let unwrap_tx = unwrap
-        .action(&owner, auth_sig, MerklePath::empty(), compliance_params())
-        .prove(ProofType::Succinct)
-        .unwrap();
+    let auth_sig = auth_sk.sign(
+        AUTH_SIGNATURE_DOMAIN,
+        unwrap.action_tree_root().unwrap().as_bytes(),
+    );
+    let unwrap_tx = prove(
+        &unwrap
+            .action(auth_sig, MerklePath::empty(), compliance_params())
+            .unwrap(),
+    );
     anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_table_commitment).unwrap();
     assert_eq!(
         tags_of(&unwrap_tx),

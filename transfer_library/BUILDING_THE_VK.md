@@ -13,7 +13,7 @@ Build the guest with the RISC0 Docker reproducible builder, from the repository
 root:
 
 ```bash
-cargo risczero build --manifest-path transfer_circuit/methods/guest/Cargo.toml
+cargo risczero build --manifest-path transfer_circuit/Cargo.toml
 ```
 
 This compiles the guest inside the pinned `risczero/risc0-guest-builder` image,
@@ -59,7 +59,7 @@ checked-in source.
    cargo update -p anoma-rm-risc0-gadgets  --precise <rev>
    cargo update -p anoma-pa-solana-client  --precise <rev>
    # guest lock
-   cd transfer_circuit/methods/guest
+   cd transfer_circuit
    cargo update -p anoma-rm-risc0          --precise <rev>
    cargo update -p anoma-rm-risc0-gadgets  --precise <rev>
    cargo update -p anoma-pa-solana-client  --precise <rev>

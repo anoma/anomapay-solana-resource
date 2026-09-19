@@ -2,11 +2,8 @@
 //! resource logics for the AnomaPay token-transfer resource on Solana: wrap and
 //! unwrap of SPL tokens through the SPL token forwarder, and transfers between
 //! shielded owners.
-pub mod call_type;
-
-use crate::call_type::CallType;
 use anoma_pa_solana_client::constants::{
-    FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+    FORWARDER_RESULT_SUCCESS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
 };
 use anoma_pa_solana_client::external_call::{
     OutputMode, SolanaExternalCall, encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
@@ -26,8 +23,6 @@ use anoma_rm_risc0_gadgets::{
 };
 use k256::AffinePoint;
 use k256::elliptic_curve::group::GroupEncoding;
-use rand::TryRngCore;
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorizationV2";
@@ -36,10 +31,6 @@ pub enum DeletionCriterion {
     Immediately = 0,
     Never = 1,
 }
-
-/// The SPL token forwarder returns this byte as return data on success.
-/// Must match the forwarder's `RESULT_SUCCESS` constant.
-pub const FORWARDER_RESULT_SUCCESS: u8 = 1;
 
 pub fn spl_amount_from_quantity(quantity: u128) -> Result<u64, ArmError> {
     u64::try_from(quantity).map_err(|_| {
@@ -62,17 +53,9 @@ impl EncryptionInfo {
         let discovery_ciphertext = Ciphertext::encrypt(&vec![0u8], discovery_pk, &discovery_sk)
             .unwrap()
             .as_words();
-        let sender_sk = SecretKey::random();
-        let encryption_nonce = {
-            let mut nonce = [0u8; 12];
-            OsRng
-                .try_fill_bytes(&mut nonce)
-                .expect("Failed to fill encryption nonce");
-            nonce
-        };
         Self {
-            sender_sk,
-            encryption_nonce: encryption_nonce.to_vec(),
+            sender_sk: SecretKey::random(),
+            encryption_nonce: rand::random::<[u8; 12]>().to_vec(),
             discovery_ciphertext,
         }
     }
@@ -116,24 +99,27 @@ pub struct ResourceWithLabel {
 /// proof of the resource logic of a given resource.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TokenTransferWitness {
-    /// Resource this witness is about.
     pub resource: Resource,
-    /// Is this a consumed or created resource.
     pub is_consumed: bool,
-    /// Action tree root.
     pub action_tree_root: Digest,
-    /// Nullifier key for the resource.
+    /// Present for a consumed resource.
     pub nf_key: Option<NullifierKey>,
-    /// A consumed persistent resource requires an authorization signature.
+    /// A consumed persistent resource requires the owner's signature.
     pub auth_sig: Option<AuthoritySignature>,
-    /// See EncryptionInfo struct.
     pub encryption_info: Option<EncryptionInfo>,
-    /// See ForwarderInfo struct.
     pub forwarder_info: Option<ForwarderInfo>,
-    /// See LabelInfo struct.
     pub label_info: Option<LabelInfo>,
-    /// See ValueInfo struct.
     pub value_info: Option<ValueInfo>,
+}
+
+/// The forwarder call an ephemeral resource triggers. The op codes, the
+/// input encoders and the account count of each call's CPI segment are
+/// owned by `anoma-pa-solana-client`, so the circuit and the on-chain
+/// forwarder agree byte for byte.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CallType {
+    Wrap,
+    Unwrap,
 }
 
 /// ForwarderInfo holds information about the forwarder program being used by a
@@ -142,7 +128,7 @@ pub struct TokenTransferWitness {
 pub struct ForwarderInfo {
     pub call_type: CallType,
     /// The user's token account owner for `Wrap`, the recipient for `Unwrap`.
-    pub solana_account: Option<[u8; 32]>,
+    pub solana_account: [u8; 32],
     /// Ed25519 wrap authorization, present only for `Wrap`.
     pub wrap_auth_info: Option<WrapAuthInfo>,
 }
@@ -161,7 +147,6 @@ impl TokenTransferWitness {
         }
     }
 
-    /// Check the value and return it unwrapped.
     pub fn value(&self) -> Result<&ValueInfo, ArmError> {
         let value_info = self
             .value_info
@@ -212,16 +197,12 @@ impl TokenTransferWitness {
                     .as_ref()
                     .ok_or(ArmError::MissingField("Wrap auth info"))?;
 
-                let solana_account = forwarder_info
-                    .solana_account
-                    .as_ref()
-                    .ok_or(ArmError::MissingField("solana_account"))?;
                 let amount = spl_amount_from_quantity(self.resource.quantity)?;
 
                 let inputs = encode_wrap_forwarder_input(
                     &label_info.spl_token_mint,
                     amount,
-                    solana_account,
+                    &forwarder_info.solana_account,
                     wrap_auth.nonce,
                     wrap_auth.deadline,
                     action_root,
@@ -237,11 +218,8 @@ impl TokenTransferWitness {
                 }
 
                 // Check resource value_ref commits to the recipient Solana account.
-                let solana_account = forwarder_info
-                    .solana_account
-                    .as_ref()
-                    .ok_or(ArmError::MissingField("solana_account"))?;
-                let value_ref = calculate_value_ref_from_solana_account(solana_account);
+                let value_ref =
+                    calculate_value_ref_from_solana_account(&forwarder_info.solana_account);
                 if self.resource.value_ref != value_ref {
                     return Err(ArmError::ProveFailed(
                         "Invalid resource value_ref".to_string(),
@@ -251,7 +229,7 @@ impl TokenTransferWitness {
                 let inputs = encode_unwrap_forwarder_input(
                     &label_info.spl_token_mint,
                     spl_amount_from_quantity(self.resource.quantity)?,
-                    solana_account,
+                    &forwarder_info.solana_account,
                 );
                 (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
             }
@@ -282,7 +260,6 @@ impl TokenTransferWitness {
 
         let value_info = self.value()?;
 
-        // Verify the authorization signature.
         if value_info
             .auth_pk
             .verify(AUTH_SIGNATURE_DOMAIN, action_root, auth_sig)
@@ -338,13 +315,11 @@ impl TokenTransferWitness {
                 .map_err(|_| ArmError::InvalidEncryptionNonce)?,
         )?;
 
-        // Generate resource_payload.
         let ciphertext_expirable_blob = ExpirableBlob {
             blob: ciphertext.as_words(),
             deletion_criterion: DeletionCriterion::Never as u32,
         };
 
-        // Generate discovery_payload.
         let ciphertext_discovery_blob = ExpirableBlob {
             blob: encryption_info.discovery_ciphertext.clone(),
             deletion_criterion: DeletionCriterion::Never as u32,
@@ -446,10 +421,9 @@ mod tests {
 
     #[test]
     fn wrap_external_call_rejects_quantity_above_u64() {
-        let err = match wrap_witness(ABOVE_U64).ephemeral_resource_check(&ACTION_TREE_ROOT) {
-            Ok(_) => panic!("wrap witness must reject oversized SPL amount"),
-            Err(err) => err,
-        };
+        let err = wrap_witness(ABOVE_U64)
+            .ephemeral_resource_check(&ACTION_TREE_ROOT)
+            .expect_err("wrap witness must reject oversized SPL amount");
         assert!(
             err.to_string().contains("exceeds u64::MAX"),
             "unexpected error: {err}"
@@ -458,10 +432,9 @@ mod tests {
 
     #[test]
     fn unwrap_external_call_rejects_quantity_above_u64() {
-        let err = match unwrap_witness(ABOVE_U64).ephemeral_resource_check(&ACTION_TREE_ROOT) {
-            Ok(_) => panic!("unwrap witness must reject oversized SPL amount"),
-            Err(err) => err,
-        };
+        let err = unwrap_witness(ABOVE_U64)
+            .ephemeral_resource_check(&ACTION_TREE_ROOT)
+            .expect_err("unwrap witness must reject oversized SPL amount");
         assert!(
             err.to_string().contains("exceeds u64::MAX"),
             "unexpected error: {err}"
@@ -511,7 +484,7 @@ mod tests {
             is_consumed: true,
             forwarder_info: Some(ForwarderInfo {
                 call_type: CallType::Wrap,
-                solana_account: Some(USER),
+                solana_account: USER,
                 wrap_auth_info: Some(WrapAuthInfo {
                     nonce: WRAP_NONCE,
                     deadline: WRAP_DEADLINE,
@@ -535,7 +508,7 @@ mod tests {
             is_consumed: false,
             forwarder_info: Some(ForwarderInfo {
                 call_type: CallType::Unwrap,
-                solana_account: Some(RECIPIENT),
+                solana_account: RECIPIENT,
                 wrap_auth_info: None,
             }),
             label_info: Some(LabelInfo {
