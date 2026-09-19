@@ -228,8 +228,8 @@ dependencies = [
 
 [[package]]
 name = "anoma-pa-solana-client"
-version = "0.2.0"
-source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=937553929595d13c6a49d77552b3ee89b33929a3#937553929595d13c6a49d77552b3ee89b33929a3"
+version = "0.4.0"
+source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=5b2df9475d08f61566a96b68fecb92088276d398#5b2df9475d08f61566a96b68fecb92088276d398"
 dependencies = [
  "base64",
  "bincode",
@@ -241,23 +241,21 @@ dependencies = [
 
 [[package]]
 name = "anoma-rm-core"
-version = "1.2.0"
-source = "git+https://github.com/anoma/arm-risc0?tag=solana-v1.2.0#9c25e986bc8e190b03d28462fd6b703e6355c4c1"
+version = "2.0.0-rc.5"
+source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "bincode",
- "borsh",
  "bytemuck",
  "hex",
- "hex-literal",
+ "risc0-zkp",
  "serde",
- "serde_with",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "anoma-rm-risc0"
-version = "1.2.0"
-source = "git+https://github.com/anoma/arm-risc0?tag=solana-v1.2.0#9c25e986bc8e190b03d28462fd6b703e6355c4c1"
+version = "2.0.0-rc.5"
+source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "anoma-rm-core",
  "bincode",
@@ -268,14 +266,16 @@ dependencies = [
  "rand 0.8.6",
  "risc0-zkvm",
  "serde",
+ "serde_json",
  "serde_with",
+ "sha3 0.10.9",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "anoma-rm-risc0-gadgets"
-version = "1.2.0"
-source = "git+https://github.com/anoma/arm-risc0?tag=solana-v1.2.0#9c25e986bc8e190b03d28462fd6b703e6355c4c1"
+version = "2.0.0-rc.5"
+source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
 dependencies = [
  "aes-gcm",
  "alloy-primitives",
@@ -799,6 +799,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "bonsai-sdk"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fc4edab3bb401344292b3de527d15663b6bbcba76d98485d96b1bd3061c7987"
+dependencies = [
+ "duplicate",
+ "maybe-async",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1424,6 +1437,17 @@ name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
+name = "duplicate"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e92f10a49176cbffacaedabfaa11d51db1ea0f80a83c26e1873b43cd1742c24"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+]
 
 [[package]]
 name = "dyn-clone"
@@ -2675,6 +2699,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "maybe-async"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "746873a384ad60adc5db74471dfaba74bd278afbdcfd81db93fafcdfc8b5ca0c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3157,6 +3192,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+ "version_check",
+]
+
+[[package]]
 name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3482,7 +3529,9 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -3502,12 +3551,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots",
 ]
@@ -3823,6 +3874,7 @@ dependencies = [
  "addr2line",
  "anyhow",
  "bincode",
+ "bonsai-sdk",
  "borsh",
  "bytemuck",
  "bytes",
@@ -4650,6 +4702,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-util"
+version = "0.7.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "toml"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4809,37 +4874,22 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
+ "anoma-pa-solana-client",
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
  "bincode",
- "hex",
+ "hex-literal",
  "k256",
- "lazy_static",
+ "risc0-zkvm",
  "serde",
  "transfer_witness",
-]
-
-[[package]]
-name = "transfer_library_v2"
-version = "1.0.0"
-dependencies = [
- "anoma-rm-risc0",
- "anoma-rm-risc0-gadgets",
- "bincode",
- "hex",
- "k256",
- "lazy_static",
- "serde",
- "sha3 0.10.9",
- "transfer_witness",
- "transfer_witness_v2",
 ]
 
 [[package]]
 name = "transfer_witness"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
@@ -4848,19 +4898,6 @@ dependencies = [
  "k256",
  "rand 0.9.4",
  "serde",
- "serde_with",
-]
-
-[[package]]
-name = "transfer_witness_v2"
-version = "1.0.0"
-dependencies = [
- "anoma-pa-solana-client",
- "anoma-rm-risc0",
- "anoma-rm-risc0-gadgets",
- "bincode",
- "serde",
- "transfer_witness",
 ]
 
 [[package]]
@@ -5095,6 +5132,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

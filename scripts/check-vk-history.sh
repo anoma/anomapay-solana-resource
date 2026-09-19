@@ -24,15 +24,16 @@ if [[ ! -f "$HISTORY" ]]; then
   exit 1
 fi
 
-# Extract the 64-hex VK passed to Digest::from_hex(...) on the TOKEN_TRANSFER_ID
-# line. The line we expect looks like:
-#     Digest::from_hex("5a033ade...768f6")
-current_vk="$(grep -oE '"[0-9a-f]{64}"' "$LIB_RS" | head -1 | tr -d '"')"
-if [[ -z "$current_vk" ]]; then
-  echo "❌ Could not find a 64-hex VK literal in $LIB_RS." >&2
+# Extract the 64-hex VK passed to Digest::from_hex(...) on the
+# TOKEN_TRANSFER_ID line: Digest::from_hex("<64 hex chars>"). The file must
+# hold exactly one such literal, or the check cannot know which one is the VK.
+mapfile -t vks < <(grep -oE '"[0-9a-f]{64}"' "$LIB_RS" | tr -d '"')
+if [[ ${#vks[@]} -ne 1 ]]; then
+  echo "❌ Expected exactly one 64-hex VK literal in $LIB_RS, found ${#vks[@]}." >&2
   echo "   Expected pattern: Digest::from_hex(\"<64 hex chars>\")" >&2
   exit 1
 fi
+current_vk="${vks[0]}"
 
 # History entries embed the VK in backtick-fenced code spans:
 #     | `<64-hex>` | ... |

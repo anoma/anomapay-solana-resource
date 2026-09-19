@@ -15,4 +15,3 @@ bincode = { workspace = true }
 k256 = { workspace = true, features = ["serde"] }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_with = { workspace = true }

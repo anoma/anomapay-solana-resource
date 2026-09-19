@@ -12,16 +12,13 @@ concurrency:
 
 jobs:
   vk-history:
-    name: Verify TOKEN_TRANSFER_ID(s) are documented in VK_HISTORY.md
+    name: Verify TOKEN_TRANSFER_ID is documented in VK_HISTORY.md
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check VK history (v1)
+      - name: Check VK history
         run: ./scripts/check-vk-history.sh
-
-      - name: Check VK history (v2)
-        run: ./scripts/check-vk-history-v2.sh
 
   fmt:
     name: Format checks
@@ -40,10 +37,6 @@ jobs:
 
       - name: cargo fmt (transfer_circuit)
         working-directory: transfer_circuit
-        run: cargo fmt --all --check
-
-      - name: cargo fmt (transfer_circuit_v2)
-        working-directory: transfer_circuit_v2
         run: cargo fmt --all --check
 
       - name: Install taplo
@@ -97,3 +90,35 @@ jobs:
 
       - name: cargo clippy (workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  guest-reproducibility:
+    name: Rebuild the guest and check TOKEN_TRANSFER_ID
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-risczero
+        # rzup resolves release assets through the GitHub API; the workflow
+        # token keeps it under the authenticated rate limit.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          "$HOME/.risc0/bin/rzup" install cargo-risczero 3.0.5
+          # cargo risczero build checks for a local RISC Zero Rust toolchain
+          # before it starts the Docker builder; 1.88.0 is the builder's own.
+          "$HOME/.risc0/bin/rzup" install rust 1.88.0
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+
+      - name: Build the guest in the reproducible builder
+        run: cargo risczero build --manifest-path transfer_circuit/Cargo.toml
+
+      - name: Compare with the embedded guest
+        run: |
+          built=transfer_circuit/target/riscv32im-risc0-zkvm-elf/docker/token-transfer-guest.bin
+          if ! cmp "$built" transfer_library/elf/token-transfer-guest.bin; then
+            echo "❌ The guest built from source differs from transfer_library/elf/token-transfer-guest.bin." >&2
+            echo "   Rebuild with cargo risczero build, embed the ELF, set TOKEN_TRANSFER_ID, record the rotation in VK_HISTORY.md." >&2
+            exit 1
+          fi
+          echo "✅ the embedded guest reproduces from source"

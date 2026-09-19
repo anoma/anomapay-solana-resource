@@ -1,9 +1,13 @@
-//! The transfer witness library holds the struct to generate proofs over resource logics for
-//! simple transfer resources in the Anoma Pay application.
-//!
-pub mod call_type;
-
-use crate::call_type::{CallType, encode_unwrap_forwarder_input, encode_wrap_forwarder_input};
+//! The transfer witness library holds the struct to generate proofs over
+//! resource logics for the AnomaPay token-transfer resource on Solana: wrap and
+//! unwrap of SPL tokens through the SPL token forwarder, and transfers between
+//! shielded owners.
+use anoma_pa_solana_client::constants::{
+    FORWARDER_RESULT_SUCCESS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+};
+use anoma_pa_solana_client::external_call::{
+    OutputMode, SolanaExternalCall, encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
+};
 pub use anoma_rm_risc0::resource_logic::LogicCircuit;
 use anoma_rm_risc0::{
     Digest,
@@ -11,7 +15,7 @@ use anoma_rm_risc0::{
     logic_instance::{AppData, ExpirableBlob, LogicInstance},
     nullifier_key::NullifierKey,
     resource::Resource,
-    utils::{bytes_to_words, hash_bytes, risc0_to_core_digest},
+    utils::{bytes_to_words, hash_bytes},
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySignature, AuthorityVerifyingKey},
@@ -19,21 +23,14 @@ use anoma_rm_risc0_gadgets::{
 };
 use k256::AffinePoint;
 use k256::elliptic_curve::group::GroupEncoding;
-use rand::TryRngCore;
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
+
+pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorizationV2";
 
 pub enum DeletionCriterion {
     Immediately = 0,
     Never = 1,
 }
-
-/// The SPL token forwarder returns this byte as return data on success.
-/// Must match the forwarder's `RESULT_SUCCESS` constant.
-pub const FORWARDER_RESULT_SUCCESS: u8 = 1;
-
-pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorization";
 
 pub fn spl_amount_from_quantity(quantity: u128) -> Result<u64, ArmError> {
     u64::try_from(quantity).map_err(|_| {
@@ -52,46 +49,16 @@ pub struct EncryptionInfo {
 
 impl EncryptionInfo {
     pub fn new(discovery_pk: &AffinePoint) -> Self {
-        let mut rng = OsRng;
-        let discovery_nonce = {
-            let mut nonce = [0u8; 12];
-            rng.try_fill_bytes(&mut nonce)
-                .expect("Failed to fill discovery nonce");
-            nonce
-        };
         let discovery_sk = SecretKey::random();
-        let discovery_ciphertext = Ciphertext::encrypt_with_nonce(
-            &vec![0u8],
-            discovery_pk,
-            &discovery_sk,
-            discovery_nonce
-                .as_slice()
-                .try_into()
-                .expect("Failed to convert discovery nonce"),
-        )
-        .unwrap()
-        .as_words();
-        let sender_sk = SecretKey::random();
-        let encryption_nonce = {
-            let mut nonce = [0u8; 12];
-            rng.try_fill_bytes(&mut nonce)
-                .expect("Failed to fill encryption nonce");
-            nonce
-        };
+        let discovery_ciphertext = Ciphertext::encrypt(&vec![0u8], discovery_pk, &discovery_sk)
+            .unwrap()
+            .as_words();
         Self {
-            sender_sk,
-            encryption_nonce: encryption_nonce.to_vec(),
+            sender_sk: SecretKey::random(),
+            encryption_nonce: rand::random::<[u8; 12]>().to_vec(),
             discovery_ciphertext,
         }
     }
-}
-
-/// ForwarderInfo holds information about the forwarder program being used by a transaction.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ForwarderInfo {
-    pub call_type: CallType,
-    pub solana_account: Option<[u8; 32]>,
-    pub wrap_auth_info: Option<WrapAuthInfo>,
 }
 
 /// LabelInfo holds information about label plaintext.
@@ -108,14 +75,15 @@ pub struct ValueInfo {
     pub encryption_pk: AffinePoint,
 }
 
-/// WrapAuthInfo contains the Ed25519 authorization data for wrapping SPL tokens.
-#[serde_as]
+/// WrapAuthInfo names the Ed25519 authorization for wrapping SPL tokens: the
+/// nonce and deadline the user signed over, and the index of the ed25519
+/// instruction in the settlement transaction that carries the signature. The
+/// forwarder verifies that instruction through the instructions sysvar; the
+/// signature itself is not part of the proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WrapAuthInfo {
     pub nonce: u64,
     pub deadline: i64,
-    #[serde_as(as = "[_; 64]")]
-    pub ed25519_signature: [u8; 64],
     pub ed25519_ix_index: u8,
 }
 
@@ -127,28 +95,16 @@ pub struct ResourceWithLabel {
     pub spl_token_mint: [u8; 32],
 }
 
-impl ResourceWithLabel {
-    pub fn new(
-        resource: Resource,
-        forwarder_program_id: [u8; 32],
-        spl_token_mint: [u8; 32],
-    ) -> Self {
-        Self {
-            resource,
-            forwarder_program_id,
-            spl_token_mint,
-        }
-    }
-}
-
-/// The TokenTransferWitness holds all the information necessary to generate a proof of the
-/// resource logic of a given resource.
+/// The TokenTransferWitness holds all the information necessary to generate a
+/// proof of the resource logic of a given resource.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TokenTransferWitness {
     pub resource: Resource,
     pub is_consumed: bool,
     pub action_tree_root: Digest,
+    /// Present for a consumed resource.
     pub nf_key: Option<NullifierKey>,
+    /// A consumed persistent resource requires the owner's signature.
     pub auth_sig: Option<AuthoritySignature>,
     pub encryption_info: Option<EncryptionInfo>,
     pub forwarder_info: Option<ForwarderInfo>,
@@ -156,32 +112,29 @@ pub struct TokenTransferWitness {
     pub value_info: Option<ValueInfo>,
 }
 
-impl TokenTransferWitness {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        resource: Resource,
-        is_consumed: bool,
-        action_tree_root: Digest,
-        nf_key: Option<NullifierKey>,
-        auth_sig: Option<AuthoritySignature>,
-        encryption_info: Option<EncryptionInfo>,
-        forwarder_info: Option<ForwarderInfo>,
-        label_info: Option<LabelInfo>,
-        value_info: Option<ValueInfo>,
-    ) -> Self {
-        Self {
-            is_consumed,
-            resource,
-            action_tree_root,
-            nf_key,
-            auth_sig,
-            encryption_info,
-            forwarder_info,
-            label_info,
-            value_info,
-        }
-    }
+/// The forwarder call an ephemeral resource triggers. The op codes, the
+/// input encoders and the account count of each call's CPI segment are
+/// owned by `anoma-pa-solana-client`, so the circuit and the on-chain
+/// forwarder agree byte for byte.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CallType {
+    Wrap,
+    Unwrap,
+}
 
+/// ForwarderInfo holds information about the forwarder program being used by a
+/// transaction and which call it makes.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ForwarderInfo {
+    pub call_type: CallType,
+    /// The user's token account owner for `Wrap`, the recipient for `Unwrap`.
+    pub solana_account: [u8; 32],
+    /// Ed25519 wrap authorization, present only for `Wrap`.
+    pub wrap_auth_info: Option<WrapAuthInfo>,
+}
+
+impl TokenTransferWitness {
+    /// Compute the tag (nullifier for consumed, commitment for created).
     pub fn tag(&self) -> Result<Digest, ArmError> {
         if self.is_consumed {
             let nf_key = self
@@ -207,6 +160,7 @@ impl TokenTransferWitness {
         Ok(value_info)
     }
 
+    /// Checks on ephemeral resources; returns the external_payload.
     pub fn ephemeral_resource_check(
         &self,
         action_root: &[u8],
@@ -221,6 +175,7 @@ impl TokenTransferWitness {
             .as_ref()
             .ok_or(ArmError::MissingField("Label info"))?;
 
+        // Check resource label: label = sha2(forwarder_program_id, spl_token_mint)
         let label_ref =
             calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
         if self.resource.label_ref != label_ref {
@@ -229,7 +184,7 @@ impl TokenTransferWitness {
             ));
         }
 
-        let inputs = match forwarder_info.call_type {
+        let (inputs, num_accounts) = match forwarder_info.call_type {
             CallType::Wrap => {
                 if !self.is_consumed {
                     return Err(ArmError::ProveFailed(
@@ -242,22 +197,18 @@ impl TokenTransferWitness {
                     .as_ref()
                     .ok_or(ArmError::MissingField("Wrap auth info"))?;
 
-                let solana_account = forwarder_info
-                    .solana_account
-                    .as_ref()
-                    .ok_or(ArmError::MissingField("solana_account"))?;
                 let amount = spl_amount_from_quantity(self.resource.quantity)?;
 
-                encode_wrap_forwarder_input(
+                let inputs = encode_wrap_forwarder_input(
                     &label_info.spl_token_mint,
                     amount,
-                    solana_account,
+                    &forwarder_info.solana_account,
                     wrap_auth.nonce,
                     wrap_auth.deadline,
                     action_root,
-                    &wrap_auth.ed25519_signature,
                     wrap_auth.ed25519_ix_index,
-                )
+                );
+                (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
             }
             CallType::Unwrap => {
                 if self.is_consumed {
@@ -266,29 +217,24 @@ impl TokenTransferWitness {
                     ));
                 }
 
-                let solana_account = forwarder_info
-                    .solana_account
-                    .as_ref()
-                    .ok_or(ArmError::MissingField("solana_account"))?;
-                let value_ref = calculate_value_ref_from_solana_account(solana_account);
+                // Check resource value_ref commits to the recipient Solana account.
+                let value_ref =
+                    calculate_value_ref_from_solana_account(&forwarder_info.solana_account);
                 if self.resource.value_ref != value_ref {
                     return Err(ArmError::ProveFailed(
                         "Invalid resource value_ref".to_string(),
                     ));
                 }
 
-                encode_unwrap_forwarder_input(
+                let inputs = encode_unwrap_forwarder_input(
                     &label_info.spl_token_mint,
                     spl_amount_from_quantity(self.resource.quantity)?,
-                    solana_account,
-                )
+                    &forwarder_info.solana_account,
+                );
+                (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
             }
         };
 
-        let num_accounts: u8 = match forwarder_info.call_type {
-            CallType::Wrap => 12,
-            CallType::Unwrap => 9,
-        };
         let call_data = SolanaExternalCall {
             program_id: label_info.forwarder_program_id,
             instruction_data: inputs,
@@ -303,6 +249,7 @@ impl TokenTransferWitness {
         Ok(vec![call_data_expirable_blob])
     }
 
+    /// Check persistent resource consumption.
     pub fn persistent_resource_consumption(&self, action_root: &[u8]) -> Result<(), ArmError> {
         spl_amount_from_quantity(self.resource.quantity)?;
 
@@ -324,6 +271,8 @@ impl TokenTransferWitness {
         Ok(())
     }
 
+    /// Check persistent resource creation; returns discovery_payload and
+    /// resource_payload.
     pub fn persistent_resource_creation(
         &self,
     ) -> Result<(Vec<ExpirableBlob>, Vec<ExpirableBlob>), ArmError> {
@@ -344,6 +293,7 @@ impl TokenTransferWitness {
 
         let value_info = self.value()?;
 
+        // Generate resource ciphertext.
         let encryption_info = self
             .encryption_info
             .as_ref()
@@ -415,20 +365,15 @@ impl LogicCircuit for TokenTransferWitness {
     }
 }
 
-// `SolanaExternalCall` and `OutputMode` are owned by `anoma-pa-solana-client`.
-// Re-exported here so existing callers using `transfer_witness::SolanaExternalCall`
-// keep compiling.
-pub use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
-
 /// Calculate the value ref based on an authorization key and an encryption key for a given user.
 pub fn calculate_persistent_value_ref(value: &ValueInfo) -> Digest {
-    risc0_to_core_digest(hash_bytes(
+    hash_bytes(
         &[
             value.auth_pk.to_bytes(),
             value.encryption_pk.to_bytes().to_vec(),
         ]
         .concat(),
-    ))
+    )
 }
 
 /// Create the value_ref for a Solana account pubkey (full 32 bytes, no padding needed).
@@ -438,17 +383,26 @@ pub fn calculate_value_ref_from_solana_account(solana_account: &[u8; 32]) -> Dig
 
 /// Calculate the label ref based on the forwarder program and token mint.
 pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8; 32]) -> Digest {
-    risc0_to_core_digest(hash_bytes(
-        &[forwarder_program_id.as_slice(), spl_token_mint.as_slice()].concat(),
-    ))
+    hash_bytes(&[forwarder_program_id.as_slice(), spl_token_mint.as_slice()].concat())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::call_type::{OP_UNWRAP, OP_WRAP};
+    use anoma_pa_solana_client::constants::{
+        FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+    };
+    use anoma_pa_solana_client::external_call::{OP_UNWRAP, OP_WRAP};
     use anoma_rm_risc0::utils::words_to_bytes;
 
+    const FORWARDER_PROGRAM_ID: [u8; 32] = [0x11; 32];
+    const SPL_TOKEN_MINT: [u8; 32] = [0x22; 32];
+    const USER: [u8; 32] = [0x33; 32];
+    const RECIPIENT: [u8; 32] = [0x77; 32];
+    const WRAP_NONCE: u64 = 7;
+    const WRAP_DEADLINE: i64 = 1_800_000_000;
+    const ED25519_IX_INDEX: u8 = 0;
+    const ACTION_TREE_ROOT: [u8; 32] = [0x99; 32];
     const ABOVE_U64: u128 = u64::MAX as u128 + 1;
 
     #[test]
@@ -467,11 +421,9 @@ mod tests {
 
     #[test]
     fn wrap_external_call_rejects_quantity_above_u64() {
-        let err =
-            match wrap_witness(ABOVE_U64).ephemeral_resource_check(Digest::default().as_bytes()) {
-                Ok(_) => panic!("wrap witness must reject oversized SPL amount"),
-                Err(err) => err,
-            };
+        let err = wrap_witness(ABOVE_U64)
+            .ephemeral_resource_check(&ACTION_TREE_ROOT)
+            .expect_err("wrap witness must reject oversized SPL amount");
         assert!(
             err.to_string().contains("exceeds u64::MAX"),
             "unexpected error: {err}"
@@ -480,105 +432,105 @@ mod tests {
 
     #[test]
     fn unwrap_external_call_rejects_quantity_above_u64() {
-        let err = match unwrap_witness(ABOVE_U64)
-            .ephemeral_resource_check(Digest::default().as_bytes())
-        {
-            Ok(_) => panic!("unwrap witness must reject oversized SPL amount"),
-            Err(err) => err,
-        };
+        let err = unwrap_witness(ABOVE_U64)
+            .ephemeral_resource_check(&ACTION_TREE_ROOT)
+            .expect_err("unwrap witness must reject oversized SPL amount");
         assert!(
             err.to_string().contains("exceeds u64::MAX"),
             "unexpected error: {err}"
         );
     }
 
+    /// The wrap call commits the V2 forwarder's segment and exactly the
+    /// encoder's bytes for every witness value, the action tree root included.
     #[test]
-    fn wrap_and_unwrap_external_calls_accept_u64_max_exactly() {
-        let wrap_call = witness_external_call(wrap_witness(u64::MAX as u128));
-        assert_eq!(wrap_call.instruction_data[0], OP_WRAP);
+    fn wrap_external_call_commits_the_forwarder_segment() {
+        let call = witness_external_call(wrap_witness(u64::MAX as u128));
+        assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+        assert_eq!(call.num_accounts, FORWARDER_WRAP_NUM_ACCOUNTS);
+        assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
+        assert_eq!(call.output_mode, OutputMode::ReturnData);
+        assert_eq!(call.instruction_data[0], OP_WRAP);
         assert_eq!(
-            encoded_forwarder_amount(&wrap_call.instruction_data),
-            u64::MAX
+            call.instruction_data,
+            encode_wrap_forwarder_input(
+                &SPL_TOKEN_MINT,
+                u64::MAX,
+                &USER,
+                WRAP_NONCE,
+                WRAP_DEADLINE,
+                &ACTION_TREE_ROOT,
+                ED25519_IX_INDEX,
+            )
         );
+    }
 
-        let unwrap_call = witness_external_call(unwrap_witness(u64::MAX as u128));
-        assert_eq!(unwrap_call.instruction_data[0], OP_UNWRAP);
+    #[test]
+    fn unwrap_external_call_commits_the_forwarder_segment() {
+        let call = witness_external_call(unwrap_witness(u64::MAX as u128));
+        assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+        assert_eq!(call.num_accounts, FORWARDER_UNWRAP_NUM_ACCOUNTS);
+        assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
+        assert_eq!(call.output_mode, OutputMode::ReturnData);
+        assert_eq!(call.instruction_data[0], OP_UNWRAP);
         assert_eq!(
-            encoded_forwarder_amount(&unwrap_call.instruction_data),
-            u64::MAX
+            call.instruction_data,
+            encode_unwrap_forwarder_input(&SPL_TOKEN_MINT, u64::MAX, &RECIPIENT)
         );
     }
 
     fn wrap_witness(quantity: u128) -> TokenTransferWitness {
-        let forwarder_program_id = [0x11; 32];
-        let spl_token_mint = [0x22; 32];
-        let solana_account = [0x33; 32];
-
         let mut witness = TokenTransferWitness {
             is_consumed: true,
             forwarder_info: Some(ForwarderInfo {
                 call_type: CallType::Wrap,
-                solana_account: Some(solana_account),
+                solana_account: USER,
                 wrap_auth_info: Some(WrapAuthInfo {
-                    nonce: 7,
-                    deadline: 1_800_000_000,
-                    ed25519_signature: [0x44; 64],
-                    ed25519_ix_index: 0,
+                    nonce: WRAP_NONCE,
+                    deadline: WRAP_DEADLINE,
+                    ed25519_ix_index: ED25519_IX_INDEX,
                 }),
             }),
             label_info: Some(LabelInfo {
-                forwarder_program_id,
-                spl_token_mint,
+                forwarder_program_id: FORWARDER_PROGRAM_ID,
+                spl_token_mint: SPL_TOKEN_MINT,
             }),
             ..Default::default()
         };
         witness.resource.quantity = quantity;
         witness.resource.is_ephemeral = true;
-        witness.resource.label_ref = calculate_label_ref(&forwarder_program_id, &spl_token_mint);
+        witness.resource.label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID, &SPL_TOKEN_MINT);
         witness
     }
 
     fn unwrap_witness(quantity: u128) -> TokenTransferWitness {
-        let forwarder_program_id = [0x55; 32];
-        let spl_token_mint = [0x66; 32];
-        let recipient = [0x77; 32];
-
         let mut witness = TokenTransferWitness {
             is_consumed: false,
             forwarder_info: Some(ForwarderInfo {
                 call_type: CallType::Unwrap,
-                solana_account: Some(recipient),
+                solana_account: RECIPIENT,
                 wrap_auth_info: None,
             }),
             label_info: Some(LabelInfo {
-                forwarder_program_id,
-                spl_token_mint,
+                forwarder_program_id: FORWARDER_PROGRAM_ID,
+                spl_token_mint: SPL_TOKEN_MINT,
             }),
             ..Default::default()
         };
         witness.resource.quantity = quantity;
         witness.resource.is_ephemeral = true;
-        witness.resource.label_ref = calculate_label_ref(&forwarder_program_id, &spl_token_mint);
-        witness.resource.value_ref = calculate_value_ref_from_solana_account(&recipient);
+        witness.resource.label_ref = calculate_label_ref(&FORWARDER_PROGRAM_ID, &SPL_TOKEN_MINT);
+        witness.resource.value_ref = calculate_value_ref_from_solana_account(&RECIPIENT);
         witness
     }
 
     fn witness_external_call(witness: TokenTransferWitness) -> SolanaExternalCall {
         let external_payload = witness
-            .ephemeral_resource_check(witness.action_tree_root.as_bytes())
+            .ephemeral_resource_check(&ACTION_TREE_ROOT)
             .expect("configured ephemeral witness should emit an external call");
         assert_eq!(external_payload.len(), 1);
 
         SolanaExternalCall::decode(words_to_bytes(&external_payload[0].blob))
             .expect("external-call blob should decode")
-    }
-
-    fn encoded_forwarder_amount(instruction_data: &[u8]) -> u64 {
-        const AMOUNT_OFFSET: usize = 1 + 32;
-        u64::from_le_bytes(
-            instruction_data[AMOUNT_OFFSET..AMOUNT_OFFSET + 8]
-                .try_into()
-                .expect("forwarder amount field should be present"),
-        )
     }
 }

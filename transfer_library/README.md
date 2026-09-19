@@ -1,39 +1,39 @@
 # transfer_library
 
-Host-side proving API for the AnomaPay Solana token-transfer resource. It wraps
-[`transfer_witness`](../transfer_witness) with ergonomic constructors and embeds
-the prebuilt RISC Zero guest, so a host can build and verify proofs without the
-RISC Zero toolchain.
+Host-side proving API for the AnomaPay Solana token-transfer resource.
 
-## What it provides
+## `TransferLogic`
 
-### `TransferLogic`
-Wraps a `TokenTransferWitness` and implements ARM's `LogicProver`. Constructors
-cover the supported flows:
+Wraps a `TokenTransferWitness` and implements ARM's `LogicProver`, so
+`logic.prove(proof_type)` produces a `LogicVerifier` for the resource. The
+constructors build the witness for each supported flow:
 
-- `mint_resource_logic_with_wrap_auth` — mint via **wrap** (Ed25519-authorized).
-- `burn_resource_logic` — burn via **unwrap** to a recipient Solana account.
-- `consume_persistent_resource_logic` — consume a persistent resource (authority
-  signature).
-- `create_persistent_resource_logic` — create a persistent resource (with
-  discovery + encryption payloads).
+| Constructor | Resource | Flow |
+|---|---|---|
+| `consume_persistent_resource_logic` | consumed persistent | spend a shielded resource (owner signature) |
+| `create_persistent_resource_logic` | created persistent | mint a shielded resource (encrypted payload) |
+| `mint_resource_logic_with_wrap_auth` | consumed ephemeral | wrap SPL tokens (Ed25519 authorization) |
+| `burn_resource_logic` | created ephemeral | unwrap SPL tokens to a recipient |
 
-### Embedded verifying artifacts
-- `TOKEN_TRANSFER_ELF` — the guest ELF, embedded with `include_bytes!` from
-  `elf/token-transfer-guest.bin`.
-- `TOKEN_TRANSFER_ID` — the matching image ID (`Digest`), returned as the
-  `LogicProver` verifying key.
+## Actions
 
-See [`VK_HISTORY.md`](VK_HISTORY.md) for the verifying-key rollback/migration
-record. The ELF is regenerated from the [`transfer_circuit`](../transfer_circuit)
-guest workspace.
+`action::wrap` and `action::unwrap` build a flow's resources from its keys and
+terms: the ephemeral resource a wrap consumes and the owner's shielded resource
+it creates, or the shielded resource an unwrap consumes and the ephemeral one it
+creates for the recipient. `Wrap::signed_message` is the text the user's wallet
+signs, and `Wrap::action` / `Unwrap::action` produce a `TransferAction`: the
+compliance witness and both transfer-logic witnesses, in tag order, which
+`TransferAction::prove` turns into a balanced transaction in-process, or which a
+caller with its own prover (a proving queue, a mock prover) proves itself.
 
-## Testing
+## Guest artifacts
 
-Circuit tests in [`src/test.rs`](src/test.rs) prove against the embedded ELF, so
-they exercise the real resource logic without rebuilding the guest. Full STARK
-proving is slow; use dev mode for fast (non-cryptographic) proofs:
+`TOKEN_TRANSFER_ELF` is the prebuilt guest (`elf/token-transfer-guest.bin`) and
+`TOKEN_TRANSFER_ID` its RISC0 image ID, the resource's logic reference. Every
+change to the ID is recorded in [`VK_HISTORY.md`](VK_HISTORY.md); CI refuses an
+ID that is not recorded there.
 
-```
-RISC0_DEV_MODE=1 cargo test -p transfer_library
-```
+## Tests
+
+`src/test.rs` proves each flow against the embedded guest. Run with
+`RISC0_DEV_MODE=1` for fast, non-cryptographic proofs.

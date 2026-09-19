@@ -1,89 +1,64 @@
-//! The transfer library contains the definition of the resource logics for the simple transfer
-//! application.
+//! The transfer library contains the definition of the resource logics for
+//! the AnomaPay token-transfer resource.
+//!
+//! Of particular interest are the `TransferLogic` struct and the
+//! `TokenTransferWitness` it wraps, and the [`action`] module that builds the
+//! wrap and unwrap actions from resources and keys.
 
+pub mod action;
 #[cfg(test)]
 mod test;
 
-use anoma_rm_risc0::{Digest, logic_proof::LogicProver, resource::Resource};
-use anoma_rm_risc0_gadgets::authority::{AuthoritySignature, AuthorityVerifyingKey};
-use hex::FromHex;
+use anoma_rm_risc0::{
+    Digest, logic_proof::LogicProver, nullifier_key::NullifierKey, resource::Resource,
+};
+use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
+use hex_literal::hex;
 use k256::AffinePoint;
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
 use transfer_witness::{
-    EncryptionInfo, ForwarderInfo, LabelInfo, TokenTransferWitness, ValueInfo, WrapAuthInfo,
-    call_type::CallType,
+    CallType, EncryptionInfo, ForwarderInfo, LabelInfo, TokenTransferWitness, ValueInfo,
+    WrapAuthInfo,
 };
 
 /// The binary program that is executed in the zkvm to generate proofs.
+/// This program takes in a witness as argument and runs the constraint function on it.
 pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-guest.bin");
 
-lazy_static! {
-    /// The identity of the binary that executes the proofs in the zkvm.
-    pub static ref TOKEN_TRANSFER_ID: Digest =
-        Digest::from_hex("5a033ade10bb3af30f8a34c31f73b6702b4ba5cbe42ce9cd1dd4835ef0c768f6")
-            .unwrap();
-}
+/// The identity of the binary that executes the proofs in the zkvm.
+pub const TOKEN_TRANSFER_ID: Digest = Digest::from_bytes(hex!(
+    "725520e56ee1d2e6ec444788a87fd97aae15a9332386fdc360260345136a010b"
+));
 
 /// Holds the transfer resource logic.
+/// The witness is the input to create a proof, so a `TransferLogic` can be used
+/// to generate a proof that the resource logics held within it are correct.
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct TransferLogic {
     pub witness: TokenTransferWitness,
 }
 
 impl TransferLogic {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        resource: Resource,
-        is_consumed: bool,
-        action_tree_root: Digest,
-        nf_key: Option<anoma_rm_risc0::nullifier_key::NullifierKey>,
-        auth_sig: Option<AuthoritySignature>,
-        encryption_info: Option<EncryptionInfo>,
-        forwarder_info: Option<ForwarderInfo>,
-        label_info: Option<LabelInfo>,
-        value_info: Option<ValueInfo>,
-    ) -> Self {
-        Self {
-            witness: TokenTransferWitness::new(
-                resource,
-                is_consumed,
-                action_tree_root,
-                nf_key,
-                auth_sig,
-                encryption_info,
-                forwarder_info,
-                label_info,
-                value_info,
-            ),
-        }
-    }
-
     /// Creates resource logic for consuming a persistent resource.
     pub fn consume_persistent_resource_logic(
         resource: Resource,
         action_tree_root: Digest,
-        nf_key: anoma_rm_risc0::nullifier_key::NullifierKey,
-        auth_pk: AuthorityVerifyingKey,
-        encryption_pk: AffinePoint,
+        nf_key: NullifierKey,
+        value: ValueInfo,
         auth_sig: AuthoritySignature,
     ) -> Self {
-        let value_info = ValueInfo {
-            auth_pk,
-            encryption_pk,
-        };
-        Self::new(
-            resource,
-            true,
-            action_tree_root,
-            Some(nf_key),
-            Some(auth_sig),
-            None,
-            None,
-            None,
-            Some(value_info),
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: true,
+                action_tree_root,
+                nf_key: Some(nf_key),
+                auth_sig: Some(auth_sig),
+                value_info: Some(value),
+                ..Default::default()
+            },
+        }
     }
 
     /// Creates a resource logic for a persistent resource creation.
@@ -91,105 +66,72 @@ impl TransferLogic {
         resource: Resource,
         action_tree_root: Digest,
         discovery_pk: &AffinePoint,
-        auth_pk: AuthorityVerifyingKey,
-        encryption_pk: AffinePoint,
-        forwarder_program_id: [u8; 32],
-        spl_token_mint: [u8; 32],
+        value: ValueInfo,
+        label: LabelInfo,
     ) -> Self {
-        let encryption_info = EncryptionInfo::new(discovery_pk);
-        let label_info = LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        };
-        let value_info = ValueInfo {
-            auth_pk,
-            encryption_pk,
-        };
-        Self::new(
-            resource,
-            false,
-            action_tree_root,
-            None,
-            None,
-            Some(encryption_info),
-            None,
-            Some(label_info),
-            Some(value_info),
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: false,
+                action_tree_root,
+                encryption_info: Some(EncryptionInfo::new(discovery_pk)),
+                label_info: Some(label),
+                value_info: Some(value),
+                ..Default::default()
+            },
+        }
     }
 
-    /// Creates a resource logic for an ephemeral resource created during minting (wrapping SPL tokens).
-    #[allow(clippy::too_many_arguments)]
+    /// Creates a resource logic for the ephemeral resource consumed when
+    /// wrapping SPL tokens, authorized by the user's Ed25519 signature in the
+    /// settlement transaction.
     pub fn mint_resource_logic_with_wrap_auth(
         resource: Resource,
         action_tree_root: Digest,
-        nf_key: anoma_rm_risc0::nullifier_key::NullifierKey,
-        forwarder_program_id: [u8; 32],
-        spl_token_mint: [u8; 32],
-        solana_account: [u8; 32],
-        nonce: u64,
-        deadline: i64,
-        ed25519_signature: [u8; 64],
-        ed25519_ix_index: u8,
+        nf_key: NullifierKey,
+        label: LabelInfo,
+        user: [u8; 32],
+        wrap_auth: WrapAuthInfo,
     ) -> Self {
-        let wrap_auth_info = WrapAuthInfo {
-            nonce,
-            deadline,
-            ed25519_signature,
-            ed25519_ix_index,
-        };
-        let forwarder_info = ForwarderInfo {
-            call_type: CallType::Wrap,
-            solana_account: Some(solana_account),
-            wrap_auth_info: Some(wrap_auth_info),
-        };
-        let label_info = LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        };
-
-        Self::new(
-            resource,
-            true,
-            action_tree_root,
-            Some(nf_key),
-            None,
-            None,
-            Some(forwarder_info),
-            Some(label_info),
-            None,
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: true,
+                action_tree_root,
+                nf_key: Some(nf_key),
+                forwarder_info: Some(ForwarderInfo {
+                    call_type: CallType::Wrap,
+                    solana_account: user,
+                    wrap_auth_info: Some(wrap_auth),
+                }),
+                label_info: Some(label),
+                ..Default::default()
+            },
+        }
     }
 
-    /// Creates a resource logic for a resource that is created when burning (unwrapping SPL tokens).
+    /// Creates a resource logic for a resource that is created when burning
+    /// (unwrapping SPL tokens) to a recipient Solana account.
     pub fn burn_resource_logic(
         resource: Resource,
         action_tree_root: Digest,
-        forwarder_program_id: [u8; 32],
-        spl_token_mint: [u8; 32],
-        recipient_account: [u8; 32],
+        label: LabelInfo,
+        recipient: [u8; 32],
     ) -> Self {
-        let forwarder_info = ForwarderInfo {
-            call_type: CallType::Unwrap,
-            solana_account: Some(recipient_account),
-            wrap_auth_info: None,
-        };
-        let label_info = LabelInfo {
-            forwarder_program_id,
-            spl_token_mint,
-        };
-
-        Self::new(
-            resource,
-            false,
-            action_tree_root,
-            None,
-            None,
-            None,
-            Some(forwarder_info),
-            Some(label_info),
-            None,
-        )
+        Self {
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: false,
+                action_tree_root,
+                forwarder_info: Some(ForwarderInfo {
+                    call_type: CallType::Unwrap,
+                    solana_account: recipient,
+                    wrap_auth_info: None,
+                }),
+                label_info: Some(label),
+                ..Default::default()
+            },
+        }
     }
 }
 
@@ -200,7 +142,7 @@ impl LogicProver for TransferLogic {
     }
 
     fn verifying_key() -> Digest {
-        *TOKEN_TRANSFER_ID
+        TOKEN_TRANSFER_ID
     }
 
     fn witness(&self) -> &Self::Witness {

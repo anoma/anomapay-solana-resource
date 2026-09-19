@@ -1,60 +1,54 @@
 # transfer_witness
 
 Witness data and resource-logic constraints for the AnomaPay Solana
-token-transfer resource. This is the leaf crate of the workspace: it is shared by
-the host (`transfer_library`) and compiled into the RISC Zero guest
-(`transfer_circuit`), so it carries the single source of truth for what a valid
-token-transfer resource looks like.
+token-transfer resource.
 
-## What it provides
+## `TokenTransferWitness`
 
-### `TokenTransferWitness`
-The full set of inputs needed to prove the resource logic of one consumed or
-created resource: the `Resource` itself, `is_consumed`, the action-tree root, and
-the optional `nf_key`, `auth_sig`, `encryption_info`, `forwarder_info`,
-`label_info`, and `value_info`.
+Everything a proof of one resource's logic needs:
 
-It implements the ARM `LogicCircuit` trait. `constrain()` dispatches on the
-resource kind and produces a `LogicInstance`:
+```rust
+pub struct TokenTransferWitness {
+    pub resource: Resource,
+    pub is_consumed: bool,
+    pub action_tree_root: Digest,
+    pub nf_key: Option<NullifierKey>,                // consumed resources
+    pub auth_sig: Option<AuthoritySignature>,        // consumed persistent resources
+    pub encryption_info: Option<EncryptionInfo>,     // created persistent resources
+    pub forwarder_info: Option<ForwarderInfo>,       // ephemeral resources
+    pub label_info: Option<LabelInfo>,
+    pub value_info: Option<ValueInfo>,
+}
+```
 
-- **ephemeral** → builds the SPL-forwarder external call (`ephemeral_resource_check`):
-  - **wrap** (consumed): encodes a `WrapInput` authorized by an Ed25519 signature
-    (`WrapAuthInfo`).
-  - **unwrap** (created): encodes an `UnwrapInput`, checking the resource
-    `value_ref` commits to the recipient Solana account.
-- **persistent, consumed** → verifies the authority signature over the action
-  root (`persistent_resource_consumption`).
-- **persistent, created** → emits the encrypted resource payload and discovery
-  ciphertext (`persistent_resource_creation`).
+`constrain()` (the ARM `LogicCircuit` implementation the guest runs) dispatches
+on the resource:
 
-### Supporting types
-`EncryptionInfo`, `ForwarderInfo`, `LabelInfo`, `ValueInfo`, `WrapAuthInfo`,
-`ResourceWithLabel`, and `CallType` (`Wrap` / `Unwrap`).
+- **ephemeral** — the resource triggers a forwarder call. The label must be
+  `sha256(forwarder_program_id ‖ spl_token_mint)`, and the call is encoded into
+  the instance's `external_payload` as a `SolanaExternalCall` (`Wrap` from a
+  consumed resource, `Unwrap` to the recipient a created resource's `value_ref`
+  names).
+- **consumed persistent** — the owner's authorization signature over the action
+  tree root, under `AUTH_SIGNATURE_DOMAIN`, must verify against the `auth_pk` in
+  the resource's `value_ref`.
+- **created persistent** — the label is checked, and the resource plus its label
+  plaintext are encrypted to the owner's `encryption_pk` into the instance's
+  `resource_payload`, with a discovery ciphertext in `discovery_payload`.
 
-### External-call types (re-exported)
-Wire-level types and helpers for the protocol adapter's external-call subsystem
-come from [`anoma-pa-solana-client`](https://github.com/anoma/anoma-pa-solana-client)'s
-`external_call` module and are re-exported here: `SolanaExternalCall` / `OutputMode`
-(bincode `encode`/`decode`), the forwarder op codes `OP_WRAP` / `OP_UNWRAP`, and the
-instruction-data encoders `encode_wrap_forwarder_input` (186 bytes) and
-`encode_unwrap_forwarder_input` (73 bytes). `call_type` also re-exports the op codes
-and encoders for existing callers.
+## Supporting types
 
-The dependency is taken with `default-features = false`: that drops the crate's
-`solana-program` / `anchor-lang` stack — which can't cross-compile to the RISC Zero
-guest target — so only the dep-free `external_call` module is compiled into the guest.
+- `ForwarderInfo { call_type, solana_account, wrap_auth_info }`
+- `WrapAuthInfo { nonce, deadline, ed25519_ix_index }` — the nonce and deadline
+  the user signed and the settlement-transaction index of the ed25519
+  instruction carrying the signature.
+- `LabelInfo`, `ValueInfo`, `EncryptionInfo`, `ResourceWithLabel`.
+- `calculate_label_ref`, `calculate_persistent_value_ref`,
+  `calculate_value_ref_from_solana_account`, `spl_amount_from_quantity`.
 
-### Reference helpers
-`calculate_label_ref` (forwarder program id + SPL mint), `calculate_persistent_value_ref`
-(auth + encryption keys), `calculate_value_ref_from_solana_account`, and
-`spl_amount_from_quantity` (rejects quantities above `u64::MAX`).
+## `call_type`
 
-## Notes
-
-- These shapes must match the protocol adapter byte-for-byte: the external-call
-  blob is serialized off-chain and read on-chain by the same definitions. They
-  live in `anoma-pa-solana-client` so both sides share a single source of truth.
-- Unit tests for the forwarder encoders and external-call round-trips live in
-  `anoma-pa-solana-client`. This crate's tests cover the witness's external-call
-  emission and the `u64::MAX` quantity bounds; end-to-end proving tests live in
-  [`transfer_library`](../transfer_library).
+`CallType { Wrap, Unwrap }`. The op codes, the instruction-data encoders and
+the account count of each call's CPI segment are owned by
+`anoma-pa-solana-client`, so the circuit and the on-chain forwarder agree byte
+for byte.
