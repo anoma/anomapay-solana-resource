@@ -199,8 +199,9 @@ dependencies = [
 
 [[package]]
 name = "anoma-rm-core"
-version = "2.0.0-rc.5"
-source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
+version = "2.0.0-rc.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4efb9c303e7b2a719ea02ae7eca7a324c9ee346010cb4b4dabf426f6201495a4"
 dependencies = [
  "bincode",
  "bytemuck",
@@ -212,9 +213,12 @@ dependencies = [
 
 [[package]]
 name = "anoma-rm-risc0"
-version = "2.0.0-rc.5"
-source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
+version = "2.0.0-rc.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bf8d3a9aaf7bcad5dc0174f7a1a202aeae67eb90befd4933e3d69bfd47aa3af"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
  "anoma-rm-core",
  "bincode",
  "bytemuck",
@@ -231,8 +235,9 @@ dependencies = [
 
 [[package]]
 name = "anoma-rm-risc0-gadgets"
-version = "2.0.0-rc.5"
-source = "git+https://github.com/anoma/arm-risc0?branch=main#5085021fffd2ce25e161010c8e2d67ff62b5a7de"
+version = "2.0.0-rc.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e17348b09e2e9289809e6289c2d8d35533869468dc2aa21c401b5e4d67f56f3"
 dependencies = [
  "aes-gcm",
  "alloy-primitives",
@@ -2990,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0"
+version = "2.0.0-rc.1"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",

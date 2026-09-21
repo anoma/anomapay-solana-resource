@@ -30,7 +30,7 @@ checked-in source.
 ## Required invariants
 
 1. **Pin arm-risc0 with the same source the Solana adapter pins (today
-   `branch = "main"`), and let the committed lockfiles fix the rev.** Cargo
+   the crates.io release `=2.0.0-rc.6`), and let the committed lockfiles fix the version.** Cargo
    treats `?branch=main` and `?rev=<sha>` of the same commit as two sources and
    links both copies of the crates, so a consumer that pins arm-risc0 one way
    cannot share types with a crate that pins it the other way; the adapter's
