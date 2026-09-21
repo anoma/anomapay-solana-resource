@@ -10,7 +10,7 @@ use anoma_rm_risc0::{
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
-    proving_system::ProofType,
+    proving_system::{JournalEncoding, ProofType},
     resource::Resource,
     transaction::{Delta, Transaction},
 };
@@ -272,7 +272,12 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
             .action(auth, &discovery_pk, compliance_params())
             .unwrap(),
     );
-    anoma_rm_risc0::transaction::verify(&wrap_tx, kind_table_commitment).unwrap();
+    anoma_rm_risc0::transaction::verify(
+        &wrap_tx,
+        kind_table_commitment,
+        JournalEncoding::Risc0Serde,
+    )
+    .unwrap();
     assert_eq!(
         tags_of(&wrap_tx),
         vec![
@@ -296,7 +301,12 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
             .action(auth_sig, MerklePath::empty(), compliance_params())
             .unwrap(),
     );
-    anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_table_commitment).unwrap();
+    anoma_rm_risc0::transaction::verify(
+        &unwrap_tx,
+        kind_table_commitment,
+        JournalEncoding::Risc0Serde,
+    )
+    .unwrap();
     assert_eq!(
         tags_of(&unwrap_tx),
         vec![
