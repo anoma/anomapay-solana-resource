@@ -23,11 +23,12 @@ use k256::{AffinePoint, Scalar};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRngCore, OsRng, SeedableRng};
 use transfer_witness::{
-    AUTH_SIGNATURE_DOMAIN, LabelInfo, LogicCircuit, ResourceWithLabel, ValueInfo, WrapAuthInfo,
-    calculate_label_ref, calculate_persistent_value_ref, calculate_value_ref_from_solana_account,
+    AUTH_SIGNATURE_DOMAIN, LabelInfo, LogicCircuit, ResourceWithLabel, TokenTransferWitness,
+    ValueInfo, WrapAuthInfo, calculate_label_ref, calculate_persistent_value_ref,
+    calculate_value_ref_from_solana_account,
 };
 
-use crate::action::{ComplianceParams, Owner, TransferAction, WrapAuth, unwrap, wrap};
+use crate::action::{ComplianceParams, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 
 const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
@@ -322,7 +323,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
 
 /// A wrap of the test owner with fixed nonces: its action differs between
 /// calls only by the randomness the created resource's encryption draws.
-fn test_wrap() -> crate::action::Wrap {
+fn test_wrap() -> Wrap {
     let owner = Owner {
         value: owner_value(),
         nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
@@ -330,19 +331,25 @@ fn test_wrap() -> crate::action::Wrap {
     wrap(label(), QUANTITY as u64, [5u8; 32], owner, [6u8; 32]).unwrap()
 }
 
-/// The witness of the wrap's created resource, as the prover receives it,
-/// and the instance it constrains to, which carries the encrypted payloads.
-fn created_witness_and_instance(rng: &mut impl CryptoRngCore) -> (Vec<u8>, LogicInstance) {
+/// The witness of the test wrap's created resource, its randomness drawn
+/// from `rng`.
+fn created_witness(rng: &mut impl CryptoRngCore) -> TokenTransferWitness {
     let auth = WrapAuth {
         user: SOLANA_ACCOUNT,
         info: wrap_auth(),
     };
     let discovery_pk = generate_public_key(&Scalar::from(ENCRYPTION_SK));
-    let witness = test_wrap()
+    test_wrap()
         .action(auth, &discovery_pk, compliance_params(), rng)
         .unwrap()
         .created_logic
-        .witness;
+        .witness
+}
+
+/// The witness of the wrap's created resource, as the prover receives it,
+/// and the instance it constrains to, which carries the encrypted payloads.
+fn created_witness_and_instance(rng: &mut impl CryptoRngCore) -> (Vec<u8>, LogicInstance) {
+    let witness = created_witness(rng);
     (
         bincode::serialize(&witness).unwrap(),
         witness.constrain().unwrap(),
@@ -352,22 +359,8 @@ fn created_witness_and_instance(rng: &mut impl CryptoRngCore) -> (Vec<u8>, Logic
 /// Asserts that two draws differ in every random input of the created
 /// resource's witness and in both of its ciphertexts.
 fn assert_fresh_randomness(first: &mut impl CryptoRngCore, second: &mut impl CryptoRngCore) {
-    let auth = || WrapAuth {
-        user: SOLANA_ACCOUNT,
-        info: wrap_auth(),
-    };
-    let discovery_pk = generate_public_key(&Scalar::from(ENCRYPTION_SK));
-    let wrap = test_wrap();
-    let first = wrap
-        .action(auth(), &discovery_pk, compliance_params(), first)
-        .unwrap()
-        .created_logic
-        .witness;
-    let second = wrap
-        .action(auth(), &discovery_pk, compliance_params(), second)
-        .unwrap()
-        .created_logic
-        .witness;
+    let first = created_witness(first);
+    let second = created_witness(second);
     let first_encryption = first.encryption_info.as_ref().unwrap();
     let second_encryption = second.encryption_info.as_ref().unwrap();
     assert!(
