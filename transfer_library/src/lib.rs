@@ -15,6 +15,7 @@ use anoma_rm_risc0::{
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
 use hex_literal::hex;
 use k256::AffinePoint;
+use k256::elliptic_curve::rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
 use transfer_witness::{
@@ -61,20 +62,22 @@ impl TransferLogic {
         }
     }
 
-    /// Creates a resource logic for a persistent resource creation.
+    /// Creates a resource logic for a persistent resource creation. The
+    /// encryption keys and nonces of its payloads are drawn from `rng`.
     pub fn create_persistent_resource_logic(
         resource: Resource,
         action_tree_root: Digest,
         discovery_pk: &AffinePoint,
         value: ValueInfo,
         label: LabelInfo,
+        rng: &mut impl CryptoRngCore,
     ) -> Self {
         Self {
             witness: TokenTransferWitness {
                 resource,
                 is_consumed: false,
                 action_tree_root,
-                encryption_info: Some(EncryptionInfo::new(discovery_pk)),
+                encryption_info: Some(EncryptionInfo::new(discovery_pk, rng)),
                 label_info: Some(label),
                 value_info: Some(value),
                 ..Default::default()

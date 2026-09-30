@@ -21,8 +21,9 @@ use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySignature, AuthorityVerifyingKey},
     encryption::{Ciphertext, SecretKey},
 };
-use k256::AffinePoint;
 use k256::elliptic_curve::group::GroupEncoding;
+use k256::elliptic_curve::rand_core::CryptoRngCore;
+use k256::{AffinePoint, NonZeroScalar};
 use serde::{Deserialize, Serialize};
 
 pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorizationV2";
@@ -48,17 +49,37 @@ pub struct EncryptionInfo {
 }
 
 impl EncryptionInfo {
-    pub fn new(discovery_pk: &AffinePoint) -> Self {
-        let discovery_sk = SecretKey::random();
-        let discovery_ciphertext = Ciphertext::encrypt(&vec![0u8], discovery_pk, &discovery_sk)
-            .unwrap()
-            .as_words();
+    /// Draws the sender keys and nonces from `rng` and encrypts the discovery
+    /// payload to `discovery_pk`. The witness is a function of the rng's
+    /// output, so a seeded rng reproduces it byte for byte.
+    pub fn new(discovery_pk: &AffinePoint, rng: &mut impl CryptoRngCore) -> Self {
+        let discovery_sk = random_secret_key(rng);
+        let discovery_ciphertext = Ciphertext::encrypt_with_nonce(
+            &vec![0u8],
+            discovery_pk,
+            &discovery_sk,
+            random_nonce(rng),
+        )
+        .unwrap()
+        .as_words();
         Self {
-            sender_sk: SecretKey::random(),
-            encryption_nonce: rand::random::<[u8; 12]>().to_vec(),
+            sender_sk: random_secret_key(rng),
+            encryption_nonce: random_nonce(rng).to_vec(),
             discovery_ciphertext,
         }
     }
+}
+
+/// A uniformly random nonzero scalar as an encryption secret key.
+fn random_secret_key(rng: &mut impl CryptoRngCore) -> SecretKey {
+    SecretKey::new(*NonZeroScalar::random(rng))
+}
+
+/// A random 96-bit AES-GCM nonce.
+fn random_nonce(rng: &mut impl CryptoRngCore) -> [u8; 12] {
+    let mut nonce = [0u8; 12];
+    rng.fill_bytes(&mut nonce);
+    nonce
 }
 
 /// LabelInfo holds information about label plaintext.

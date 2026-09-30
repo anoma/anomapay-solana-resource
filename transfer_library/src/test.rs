@@ -7,6 +7,7 @@ use anoma_rm_risc0::{
     Digest,
     compliance::hash_kind_table_entries,
     delta_proof::DeltaWitness,
+    logic_instance::LogicInstance,
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
@@ -19,8 +20,10 @@ use anoma_rm_risc0_gadgets::{
     encryption::{Ciphertext, SecretKey, generate_public_key, random_keypair},
 };
 use k256::{AffinePoint, Scalar};
+use rand_chacha::ChaCha20Rng;
+use rand_core::{CryptoRngCore, OsRng, SeedableRng};
 use transfer_witness::{
-    AUTH_SIGNATURE_DOMAIN, LabelInfo, ResourceWithLabel, ValueInfo, WrapAuthInfo,
+    AUTH_SIGNATURE_DOMAIN, LabelInfo, LogicCircuit, ResourceWithLabel, ValueInfo, WrapAuthInfo,
     calculate_label_ref, calculate_persistent_value_ref, calculate_value_ref_from_solana_account,
 };
 
@@ -185,6 +188,7 @@ fn test_transfer() {
         &created_discovery_pk,
         owner_value(),
         label(),
+        &mut OsRng,
     );
     let proof = created_resource_logic.prove(ProofType::Succinct).unwrap();
     verify(&proof).unwrap();
@@ -269,7 +273,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
     let (_, discovery_pk) = random_keypair();
     let wrap_tx = prove(
         &wrap
-            .action(auth, &discovery_pk, compliance_params())
+            .action(auth, &discovery_pk, compliance_params(), &mut OsRng)
             .unwrap(),
     );
     anoma_rm_risc0::transaction::verify(
@@ -314,4 +318,103 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
             unwrap.created.commitment()
         ]
     );
+}
+
+/// A wrap of the test owner with fixed nonces: its action differs between
+/// calls only by the randomness the created resource's encryption draws.
+fn test_wrap() -> crate::action::Wrap {
+    let owner = Owner {
+        value: owner_value(),
+        nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
+    };
+    wrap(label(), QUANTITY as u64, [5u8; 32], owner, [6u8; 32]).unwrap()
+}
+
+/// The witness of the wrap's created resource, as the prover receives it,
+/// and the instance it constrains to, which carries the encrypted payloads.
+fn created_witness_and_instance(rng: &mut impl CryptoRngCore) -> (Vec<u8>, LogicInstance) {
+    let auth = WrapAuth {
+        user: SOLANA_ACCOUNT,
+        info: wrap_auth(),
+    };
+    let discovery_pk = generate_public_key(&Scalar::from(ENCRYPTION_SK));
+    let witness = test_wrap()
+        .action(auth, &discovery_pk, compliance_params(), rng)
+        .unwrap()
+        .created_logic
+        .witness;
+    (
+        bincode::serialize(&witness).unwrap(),
+        witness.constrain().unwrap(),
+    )
+}
+
+/// Asserts that two draws differ in every random input of the created
+/// resource's witness and in both of its ciphertexts.
+fn assert_fresh_randomness(first: &mut impl CryptoRngCore, second: &mut impl CryptoRngCore) {
+    let auth = || WrapAuth {
+        user: SOLANA_ACCOUNT,
+        info: wrap_auth(),
+    };
+    let discovery_pk = generate_public_key(&Scalar::from(ENCRYPTION_SK));
+    let wrap = test_wrap();
+    let first = wrap
+        .action(auth(), &discovery_pk, compliance_params(), first)
+        .unwrap()
+        .created_logic
+        .witness;
+    let second = wrap
+        .action(auth(), &discovery_pk, compliance_params(), second)
+        .unwrap()
+        .created_logic
+        .witness;
+    let first_encryption = first.encryption_info.as_ref().unwrap();
+    let second_encryption = second.encryption_info.as_ref().unwrap();
+    assert!(
+        first_encryption.sender_sk != second_encryption.sender_sk,
+        "the sender keys must differ"
+    );
+    assert_ne!(
+        first_encryption.encryption_nonce, second_encryption.encryption_nonce,
+        "the resource payload nonces must differ"
+    );
+    assert_ne!(
+        first_encryption.discovery_ciphertext, second_encryption.discovery_ciphertext,
+        "the discovery ciphertexts must differ"
+    );
+    let first_payload = first.constrain().unwrap().app_data.resource_payload;
+    let second_payload = second.constrain().unwrap().app_data.resource_payload;
+    assert_ne!(
+        first_payload[0].blob, second_payload[0].blob,
+        "the resource payload ciphertexts must differ"
+    );
+}
+
+#[test]
+fn wrap_action_is_reproducible_from_a_seed() {
+    let (first_witness, first_instance) =
+        created_witness_and_instance(&mut ChaCha20Rng::seed_from_u64(1));
+    let (second_witness, second_instance) =
+        created_witness_and_instance(&mut ChaCha20Rng::seed_from_u64(1));
+    assert_eq!(
+        first_witness, second_witness,
+        "the created resource's witness must be a function of the seed"
+    );
+    assert_eq!(
+        first_instance, second_instance,
+        "the created resource's encrypted payloads must be a function of the seed"
+    );
+}
+
+#[test]
+fn wrap_actions_from_different_seeds_differ() {
+    assert_fresh_randomness(
+        &mut ChaCha20Rng::seed_from_u64(1),
+        &mut ChaCha20Rng::seed_from_u64(2),
+    );
+}
+
+#[test]
+fn wrap_actions_from_os_rng_differ() {
+    assert_fresh_randomness(&mut OsRng, &mut OsRng);
 }

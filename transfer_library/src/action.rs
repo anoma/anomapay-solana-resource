@@ -16,6 +16,7 @@ use anoma_rm_risc0::{
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
 use k256::AffinePoint;
+use k256::elliptic_curve::rand_core::CryptoRngCore;
 use transfer_witness::{
     LabelInfo, ValueInfo, WrapAuthInfo, calculate_label_ref, calculate_persistent_value_ref,
     calculate_value_ref_from_solana_account,
@@ -161,12 +162,14 @@ impl Wrap {
     }
 
     /// The action's witnesses. `discovery_pk` is the key the created
-    /// resource's discovery payload is encrypted to.
+    /// resource's discovery payload is encrypted to; the encryption keys and
+    /// nonces of the created resource's payloads are drawn from `rng`.
     pub fn action(
         &self,
         auth: WrapAuth,
         discovery_pk: &AffinePoint,
         compliance: ComplianceParams,
+        rng: &mut impl CryptoRngCore,
     ) -> Result<TransferAction, ArmError> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
@@ -194,6 +197,7 @@ impl Wrap {
                 discovery_pk,
                 self.owner.value.clone(),
                 self.label.clone(),
+                rng,
             ),
         })
     }

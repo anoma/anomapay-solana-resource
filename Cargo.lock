@@ -4887,6 +4887,8 @@ dependencies = [
  "bincode",
  "hex-literal",
  "k256",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "risc0-zkvm",
  "serde",
  "transfer_witness",
@@ -4901,7 +4903,6 @@ dependencies = [
  "anoma-rm-risc0-gadgets",
  "bincode",
  "k256",
- "rand 0.9.4",
  "serde",
 ]
 
