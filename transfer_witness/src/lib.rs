@@ -26,7 +26,7 @@ use k256::elliptic_curve::rand_core::CryptoRngCore;
 use k256::{AffinePoint, NonZeroScalar};
 use serde::{Deserialize, Serialize};
 
-pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorizationV2";
+pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorization";
 
 pub enum DeletionCriterion {
     Immediately = 0,
@@ -425,6 +425,14 @@ mod tests {
     const ED25519_IX_INDEX: u8 = 0;
     const ACTION_TREE_ROOT: [u8; 32] = [0x99; 32];
     const ABOVE_U64: u128 = u64::MAX as u128 + 1;
+
+    /// The owner signs under the domain of the EVM V2 transfer resource the
+    /// EVM V2 forwarder serves (anoma/anomapay-erc20-resource
+    /// `transfer_witness`); the `V2` string is its migration resource's.
+    #[test]
+    fn auth_signature_domain_is_the_evm_transfer_resources() {
+        assert_eq!(AUTH_SIGNATURE_DOMAIN, b"TokenTransferAuthorization");
+    }
 
     #[test]
     fn spl_amount_from_quantity_rejects_overflow() {
