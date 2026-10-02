@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "anoma-pa-solana-client"
 version = "0.4.0"
-source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=5b2df9475d08f61566a96b68fecb92088276d398#5b2df9475d08f61566a96b68fecb92088276d398"
+source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=6fa81a51cf4fde3e65260a2f0c7c1cf4bc4a8287#6fa81a51cf4fde3e65260a2f0c7c1cf4bc4a8287"
 dependencies = [
  "base64",
  "bincode",
@@ -4879,7 +4879,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "2.0.0-rc.1"
+version = "2.0.0-rc.2"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
@@ -4896,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0-rc.1"
+version = "2.0.0-rc.2"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
