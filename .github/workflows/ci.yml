@@ -53,6 +53,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: One anoma-pa-solana-client in each lockfile
+        # A second copy means our rev differs from the one the forwarder
+        # client pins, and the guest links the adapter client twice.
+        run: |
+          for lock in Cargo.lock transfer_circuit/Cargo.lock; do
+            count=$(awk '$0 == "name = \"anoma-pa-solana-client\"" { n++ } END { print n + 0 }' "$lock")
+            if [ "$count" -ne 1 ]; then
+              echo "❌ $lock has $count anoma-pa-solana-client packages, expected 1." >&2
+              echo "   Pin anoma-pa-solana-client at the rev anomapay-spl-token-forwarder-client pins (transfer_library/BUILDING_THE_VK.md)." >&2
+              exit 1
+            fi
+          done
+          echo "✅ each lockfile has one anoma-pa-solana-client"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:

@@ -4,7 +4,6 @@
 //! prover; a [`TransferAction`] is unproven until the caller's prover turns
 //! its witnesses into proofs.
 
-use anoma_pa_solana_client::wrap_message::WrapMessage;
 use anoma_rm_risc0::{
     Digest,
     action_tree::ActionTree,
@@ -15,11 +14,12 @@ use anoma_rm_risc0::{
     resource::{ConsumedResourceWitness, Resource},
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
+use anomapay_spl_token_forwarder_client::WrapMessage;
 use k256::AffinePoint;
 use k256::elliptic_curve::rand_core::CryptoRngCore;
 use transfer_witness::{
     LabelInfo, ValueInfo, WrapAuthInfo, calculate_label_ref, calculate_persistent_value_ref,
-    calculate_value_ref_from_solana_account,
+    calculate_value_ref_from_solana_account, spl_amount_from_quantity,
 };
 
 use crate::{TOKEN_TRANSFER_ID, TransferLogic};
@@ -153,7 +153,7 @@ impl Wrap {
         Ok(WrapMessage {
             forwarder_id: self.label.forwarder_program_id,
             token_mint: self.label.spl_token_mint,
-            amount: self.consumed.quantity as u64,
+            amount: spl_amount_from_quantity(self.consumed.quantity)?,
             nonce: auth.info.nonce,
             deadline: auth.info.deadline,
             action_tree_root: self.action_tree_root()?.into(),

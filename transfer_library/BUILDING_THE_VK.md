@@ -51,19 +51,22 @@ checked-in source.
 
 3. **Commit BOTH lockfiles (root and guest) with `rev=` git sources and
    transitive versions that compile under the guest toolchain.** After changing
-   a pin, convert each lock's git sources in place without bumping the rest:
+   a pin, convert each lock's git sources in place without bumping the rest
+   (the arm crates are `=` pins on crates.io, which the manifest alone fixes):
 
    ```bash
    # root / host lock
-   cargo update -p anoma-rm-risc0          --precise <rev>
-   cargo update -p anoma-rm-risc0-gadgets  --precise <rev>
-   cargo update -p anoma-pa-solana-client  --precise <rev>
+   cargo update -p anoma-pa-solana-client               --precise <rev>
+   cargo update -p anomapay-spl-token-forwarder-client  --precise <rev>
    # guest lock
    cd transfer_circuit
-   cargo update -p anoma-rm-risc0          --precise <rev>
-   cargo update -p anoma-rm-risc0-gadgets  --precise <rev>
-   cargo update -p anoma-pa-solana-client  --precise <rev>
+   cargo update -p anoma-pa-solana-client               --precise <rev>
+   cargo update -p anomapay-spl-token-forwarder-client  --precise <rev>
    ```
+
+   The forwarder client depends on `anoma-pa-solana-client` itself; pin the
+   adapter client at the rev the forwarder client pins, or the guest links two
+   copies of it.
 
    Do **not** run a blind `cargo update`. The host cargo resolves transitive
    dependencies to versions the pinned guest toolchain may not build. The

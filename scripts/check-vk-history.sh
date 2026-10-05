@@ -24,13 +24,13 @@ if [[ ! -f "$HISTORY" ]]; then
   exit 1
 fi
 
-# Extract the 64-hex VK passed to Digest::from_hex(...) on the
-# TOKEN_TRANSFER_ID line: Digest::from_hex("<64 hex chars>"). The file must
-# hold exactly one such literal, or the check cannot know which one is the VK.
+# Extract the 64-hex VK literal of TOKEN_TRANSFER_ID:
+# Digest::from_bytes(hex!("<64 hex chars>")). The file must hold exactly one
+# such literal, or the check cannot know which one is the VK.
 mapfile -t vks < <(grep -oE '"[0-9a-f]{64}"' "$LIB_RS" | tr -d '"')
 if [[ ${#vks[@]} -ne 1 ]]; then
   echo "❌ Expected exactly one 64-hex VK literal in $LIB_RS, found ${#vks[@]}." >&2
-  echo "   Expected pattern: Digest::from_hex(\"<64 hex chars>\")" >&2
+  echo "   Expected pattern: Digest::from_bytes(hex!(\"<64 hex chars>\"))" >&2
   exit 1
 fi
 current_vk="${vks[0]}"

@@ -331,6 +331,25 @@ fn test_wrap() -> Wrap {
     wrap(label(), QUANTITY as u64, [5u8; 32], owner, [6u8; 32]).unwrap()
 }
 
+/// The signed message carries the SPL amount the circuit commits to, so a
+/// quantity the circuit refuses as an SPL amount has no message either.
+#[test]
+fn wrap_signed_message_rejects_quantity_above_u64() {
+    let mut wrap = test_wrap();
+    wrap.consumed.quantity = u64::MAX as u128 + 1;
+    let auth = WrapAuth {
+        user: SOLANA_ACCOUNT,
+        info: wrap_auth(),
+    };
+    let err = wrap
+        .signed_message(&auth)
+        .expect_err("a quantity above u64::MAX must not be signed as an SPL amount");
+    assert!(
+        err.to_string().contains("exceeds u64::MAX"),
+        "unexpected error: {err}"
+    );
+}
+
 /// The witness of the test wrap's created resource, its randomness drawn
 /// from `rng`.
 fn created_witness(rng: &mut impl CryptoRngCore) -> TokenTransferWitness {
