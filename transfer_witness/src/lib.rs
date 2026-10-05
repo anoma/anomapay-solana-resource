@@ -16,10 +16,8 @@ use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySignature, AuthorityVerifyingKey},
     encryption::{Ciphertext, SecretKey},
 };
-use anomapay_spl_token_forwarder_client::constants::{
+use anomapay_spl_token_forwarder_client::{
     FORWARDER_RESULT_SUCCESS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
-};
-use anomapay_spl_token_forwarder_client::input::{
     encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
 };
 use k256::elliptic_curve::group::GroupEncoding;
@@ -272,7 +270,7 @@ impl TokenTransferWitness {
     }
 
     /// Check persistent resource consumption.
-    pub fn persistent_resource_consumption(&self, action_root: &[u8]) -> Result<(), ArmError> {
+    pub fn persistent_resource_consumption(&self, action_root: &[u8; 32]) -> Result<(), ArmError> {
         spl_amount_from_quantity(self.resource.quantity)?;
 
         let auth_sig = self
@@ -412,7 +410,7 @@ pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8
 mod tests {
     use super::*;
     use anoma_rm_risc0::utils::words_to_bytes;
-    use anomapay_spl_token_forwarder_client::input::{OP_UNWRAP, OP_WRAP};
+    use anomapay_spl_token_forwarder_client::{OP_UNWRAP, OP_WRAP};
 
     const FORWARDER_PROGRAM_ID: [u8; 32] = [0x11; 32];
     const SPL_TOKEN_MINT: [u8; 32] = [0x22; 32];

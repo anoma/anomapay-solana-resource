@@ -29,7 +29,7 @@ pub const TOKEN_TRANSFER_ELF: &[u8] = include_bytes!("../elf/token-transfer-gues
 
 /// The identity of the binary that executes the proofs in the zkvm.
 pub const TOKEN_TRANSFER_ID: Digest = Digest::from_bytes(hex!(
-    "8e499f7836ed184b57a55de16d9dd7bd1182a358e49a0898427690ae7b294490"
+    "ae9638a19d845680054532813f64d502cff6e65935117245fd87387a7b768315"
 ));
 
 /// Holds the transfer resource logic.
