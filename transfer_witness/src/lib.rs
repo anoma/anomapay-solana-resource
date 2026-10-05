@@ -2,12 +2,7 @@
 //! resource logics for the AnomaPay token-transfer resource on Solana: wrap and
 //! unwrap of SPL tokens through the SPL token forwarder, and transfers between
 //! shielded owners.
-use anoma_pa_solana_client::constants::{
-    FORWARDER_RESULT_SUCCESS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
-};
-use anoma_pa_solana_client::external_call::{
-    OutputMode, SolanaExternalCall, encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
-};
+use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 pub use anoma_rm_risc0::resource_logic::LogicCircuit;
 use anoma_rm_risc0::{
     Digest,
@@ -20,6 +15,12 @@ use anoma_rm_risc0::{
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySignature, AuthorityVerifyingKey},
     encryption::{Ciphertext, SecretKey},
+};
+use anomapay_spl_token_forwarder_client::constants::{
+    FORWARDER_RESULT_SUCCESS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
+};
+use anomapay_spl_token_forwarder_client::input::{
+    encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
 };
 use k256::elliptic_curve::group::GroupEncoding;
 use k256::elliptic_curve::rand_core::CryptoRngCore;
@@ -135,8 +136,8 @@ pub struct TokenTransferWitness {
 
 /// The forwarder call an ephemeral resource triggers. The op codes, the
 /// input encoders and the account count of each call's CPI segment are
-/// owned by `anoma-pa-solana-client`, so the circuit and the on-chain
-/// forwarder agree byte for byte.
+/// owned by the forwarder's own client, `anomapay-spl-token-forwarder-client`,
+/// so the circuit and the on-chain forwarder agree byte for byte.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CallType {
     Wrap,
@@ -184,7 +185,7 @@ impl TokenTransferWitness {
     /// Checks on ephemeral resources; returns the external_payload.
     pub fn ephemeral_resource_check(
         &self,
-        action_root: &[u8],
+        action_root: &[u8; 32],
     ) -> Result<Vec<ExpirableBlob>, ArmError> {
         let forwarder_info = self
             .forwarder_info
@@ -356,14 +357,14 @@ impl TokenTransferWitness {
 impl LogicCircuit for TokenTransferWitness {
     fn constrain(&self) -> Result<LogicInstance, ArmError> {
         let tag = self.tag()?;
-        let root_bytes = self.action_tree_root.as_bytes();
+        let root_bytes: [u8; 32] = self.action_tree_root.into();
 
         let (discovery_payload, resource_payload, external_payload) = if self.resource.is_ephemeral
         {
-            let external_payload = self.ephemeral_resource_check(root_bytes)?;
+            let external_payload = self.ephemeral_resource_check(&root_bytes)?;
             (vec![], vec![], external_payload)
         } else if self.is_consumed {
-            self.persistent_resource_consumption(root_bytes)?;
+            self.persistent_resource_consumption(&root_bytes)?;
             (vec![], vec![], vec![])
         } else {
             let (discovery_payload, resource_payload) = self.persistent_resource_creation()?;
@@ -410,11 +411,8 @@ pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anoma_pa_solana_client::constants::{
-        FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
-    };
-    use anoma_pa_solana_client::external_call::{OP_UNWRAP, OP_WRAP};
     use anoma_rm_risc0::utils::words_to_bytes;
+    use anomapay_spl_token_forwarder_client::input::{OP_UNWRAP, OP_WRAP};
 
     const FORWARDER_PROGRAM_ID: [u8; 32] = [0x11; 32];
     const SPL_TOKEN_MINT: [u8; 32] = [0x22; 32];

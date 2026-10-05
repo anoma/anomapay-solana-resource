@@ -4,7 +4,6 @@
 //! prover; a [`TransferAction`] is unproven until the caller's prover turns
 //! its witnesses into proofs.
 
-use anoma_pa_solana_client::wrap_message::WrapMessage;
 use anoma_rm_risc0::{
     Digest,
     action_tree::ActionTree,
@@ -15,6 +14,7 @@ use anoma_rm_risc0::{
     resource::{ConsumedResourceWitness, Resource},
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
+use anomapay_spl_token_forwarder_client::wrap_message::WrapMessage;
 use k256::AffinePoint;
 use k256::elliptic_curve::rand_core::CryptoRngCore;
 use transfer_witness::{

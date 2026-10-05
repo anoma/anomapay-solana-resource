@@ -49,6 +49,7 @@ on the resource:
 ## `call_type`
 
 `CallType { Wrap, Unwrap }`. The op codes, the instruction-data encoders and
-the account count of each call's CPI segment are owned by
-`anoma-pa-solana-client`, so the circuit and the on-chain forwarder agree byte
-for byte.
+the account count of each call's CPI segment are owned by the forwarder's own
+client, `anomapay-spl-token-forwarder-client`, so the circuit and the on-chain
+forwarder agree byte for byte. The `SolanaExternalCall` the call is encoded
+into is the adapter's, from `anoma-pa-solana-client`.
