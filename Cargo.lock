@@ -229,11 +229,9 @@ dependencies = [
 [[package]]
 name = "anoma-pa-solana-client"
 version = "0.4.0"
-source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=4c034a946d34ba09e5ce845fcae1c8880babe0cb#4c034a946d34ba09e5ce845fcae1c8880babe0cb"
+source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=8ed65a4b5f00164641c10d16661de97d47a8ecab#8ed65a4b5f00164641c10d16661de97d47a8ecab"
 dependencies = [
  "bincode",
- "hkdf",
- "hmac",
  "serde",
  "sha2",
 ]
@@ -296,7 +294,7 @@ dependencies = [
 [[package]]
 name = "anomapay-spl-token-forwarder-client"
 version = "0.1.0"
-source = "git+https://github.com/anoma/anomapay-spl-token-forwarder?rev=54eabb1fc80b7b8accc121c91d72d898c55d855d#54eabb1fc80b7b8accc121c91d72d898c55d855d"
+source = "git+https://github.com/anoma/anomapay-spl-token-forwarder?rev=400d6b32649ba7c6d90b94050711e8fef06d2ec6#400d6b32649ba7c6d90b94050711e8fef06d2ec6"
 dependencies = [
  "anoma-pa-solana-client",
  "base64",
@@ -2059,15 +2057,6 @@ name = "hex-literal"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
-
-[[package]]
-name = "hkdf"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
-dependencies = [
- "hmac",
-]
 
 [[package]]
 name = "hmac"
@@ -4888,7 +4877,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "2.0.0-rc.3"
+version = "2.0.0-rc.4"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
@@ -4905,7 +4894,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0-rc.3"
+version = "2.0.0-rc.4"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",

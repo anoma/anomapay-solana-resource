@@ -33,8 +33,9 @@ checked-in source.
    the crates.io release `=2.0.0-rc.6`), and let the committed lockfiles fix the version.** Cargo
    treats `?branch=main` and `?rev=<sha>` of the same commit as two sources and
    links both copies of the crates, so a consumer that pins arm-risc0 one way
-   cannot share types with a crate that pins it the other way; the adapter's
-   fixture generator depends on `transfer_library`, so the two must agree. The
+   cannot share types with a crate that pins it the other way; the SPL token
+   forwarder's integration tests depend on `transfer_library` and on the
+   adapter's harness, so the two must agree. The
    guest depends on `transfer_witness` by path, and cargo resolves that crate's
    `{ workspace = true }` dependencies against the repository root, so the root
    pin governs the guest too. Because a branch pin re-resolves whenever a
