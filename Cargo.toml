@@ -15,7 +15,7 @@ version = "2.0.0-rc.5"
 # anoma-pa-solana-client and anomapay-spl-token-forwarder-client (below) take
 # `default-features = false`: only their dep-free wire formats are used (the
 # adapter's external call; the forwarder's op codes, input encoders, segment
-# sizes, success byte and wrap message), and dropping the default `solana`
+# sizes and wrap message), and dropping the default `solana`
 # feature keeps the Solana SDK out of the RISC Zero guest, which can't
 # cross-compile it. anoma-pa-solana-client's rev is the one the forwarder
 # client pins, so one source of it reaches the guest.
