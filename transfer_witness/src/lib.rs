@@ -17,8 +17,8 @@ use anoma_rm_risc0_gadgets::{
     encryption::{Ciphertext, SecretKey},
 };
 use anomapay_spl_token_forwarder_client::{
-    FORWARDER_RESULT_SUCCESS, FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS,
-    encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
+    FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS, encode_unwrap_forwarder_input,
+    encode_wrap_forwarder_input,
 };
 use k256::elliptic_curve::group::GroupEncoding;
 use k256::elliptic_curve::rand_core::CryptoRngCore;
@@ -258,7 +258,9 @@ impl TokenTransferWitness {
         let call_data = SolanaExternalCall {
             program_id: label_info.forwarder_program_id,
             instruction_data: inputs,
-            expected_output: vec![FORWARDER_RESULT_SUCCESS],
+            // The forwarder returns the empty output, as the EVM ERC20
+            // forwarder does, whose resource expects it the same way.
+            expected_output: Vec::new(),
             output_mode: OutputMode::ReturnData,
             num_accounts,
         };
@@ -473,7 +475,7 @@ mod tests {
         let call = witness_external_call(wrap_witness(u64::MAX as u128));
         assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
         assert_eq!(call.num_accounts, FORWARDER_WRAP_NUM_ACCOUNTS);
-        assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
+        assert!(call.expected_output.is_empty());
         assert_eq!(call.output_mode, OutputMode::ReturnData);
         assert_eq!(call.instruction_data[0], OP_WRAP);
         assert_eq!(
@@ -495,7 +497,7 @@ mod tests {
         let call = witness_external_call(unwrap_witness(u64::MAX as u128));
         assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
         assert_eq!(call.num_accounts, FORWARDER_UNWRAP_NUM_ACCOUNTS);
-        assert_eq!(call.expected_output, vec![FORWARDER_RESULT_SUCCESS]);
+        assert!(call.expected_output.is_empty());
         assert_eq!(call.output_mode, OutputMode::ReturnData);
         assert_eq!(call.instruction_data[0], OP_UNWRAP);
         assert_eq!(
