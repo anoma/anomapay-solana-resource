@@ -48,7 +48,7 @@ pub struct ComplianceParams {
 
 /// The user's ed25519 authorization of a wrap, as the forwarder checks it:
 /// the Solana account whose tokens are wrapped and whose signature the
-/// ed25519 instruction carries, and the terms it signed.
+/// ed25519 instruction carries, and the terms it signed with the signature.
 pub struct WrapAuth {
     pub user: [u8; 32],
     pub info: WrapAuthInfo,
@@ -146,16 +146,18 @@ impl Wrap {
         )
     }
 
-    /// The text the user signs and the ed25519 instruction carries: base64
-    /// of the sha256 of the 120-byte wrap message the forwarder recomputes
-    /// from the proof-bound input.
-    pub fn signed_message(&self, auth: &WrapAuth) -> Result<String, ArmError> {
+    /// The text the user signs, for the forwarder nonce `nonce` and the
+    /// deadline `deadline`, and the ed25519 instruction carries: base64 of
+    /// the sha256 of the 120-byte wrap message the forwarder recomputes from
+    /// the proof-bound input. The signature goes into the [`WrapAuth`] the
+    /// action is built with.
+    pub fn signed_message(&self, nonce: u64, deadline: i64) -> Result<String, ArmError> {
         Ok(WrapMessage {
             forwarder_id: self.label.forwarder_program_id,
             token_mint: self.label.spl_token_mint,
             amount: spl_amount_from_quantity(self.consumed.quantity)?,
-            nonce: auth.info.nonce,
-            deadline: auth.info.deadline,
+            nonce,
+            deadline,
             action_tree_root: self.action_tree_root()?.into(),
         }
         .base64_digest())

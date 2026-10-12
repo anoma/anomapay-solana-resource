@@ -17,13 +17,14 @@ use anoma_rm_risc0_gadgets::{
     encryption::{Ciphertext, SecretKey},
 };
 use anomapay_spl_token_forwarder_client::{
-    FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS, encode_unwrap_forwarder_input,
-    encode_wrap_forwarder_input,
+    FORWARDER_UNWRAP_NUM_ACCOUNTS, FORWARDER_WRAP_NUM_ACCOUNTS, WrapInput,
+    encode_unwrap_forwarder_input, encode_wrap_forwarder_input,
 };
 use k256::elliptic_curve::group::GroupEncoding;
 use k256::elliptic_curve::rand_core::CryptoRngCore;
 use k256::{AffinePoint, NonZeroScalar};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 
 pub const AUTH_SIGNATURE_DOMAIN: &[u8] = b"TokenTransferAuthorization";
 
@@ -95,15 +96,23 @@ pub struct ValueInfo {
     pub encryption_pk: AffinePoint,
 }
 
-/// WrapAuthInfo names the Ed25519 authorization for wrapping SPL tokens: the
-/// nonce and deadline the user signed over, and the index of the ed25519
-/// instruction in the settlement transaction that carries the signature. The
-/// forwarder verifies that instruction through the instructions sysvar; the
-/// signature itself is not part of the proof.
+/// WrapAuthInfo is the user's Ed25519 authorization of an SPL token wrap: the
+/// nonce and deadline the user signed over, the signature, and the index of
+/// the ed25519 instruction in the settlement transaction that verifies it.
+#[serde_as]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WrapAuthInfo {
     pub nonce: u64,
     pub deadline: i64,
+    /// The user's signature over the wrap message, committed in the wrap's
+    /// forwarder input. The forwarder program does not read it: a program
+    /// cannot call the ed25519 verifier, so the ed25519 instruction at
+    /// `ed25519_ix_index` verifies it. It is in the input so that the proven
+    /// transaction carries it, as the EVM wrap input carries its Permit2
+    /// signature, and the submitter builds that instruction from the
+    /// transaction alone. Do not remove it as unused.
+    #[serde_as(as = "[_; 64]")]
+    pub signature: [u8; 64],
     pub ed25519_ix_index: u8,
 }
 
@@ -219,15 +228,16 @@ impl TokenTransferWitness {
 
                 let amount = spl_amount_from_quantity(self.resource.quantity)?;
 
-                let inputs = encode_wrap_forwarder_input(
-                    &label_info.spl_token_mint,
+                let inputs = encode_wrap_forwarder_input(&WrapInput {
+                    token_mint: label_info.spl_token_mint,
                     amount,
-                    &forwarder_info.solana_account,
-                    wrap_auth.nonce,
-                    wrap_auth.deadline,
-                    action_root,
-                    wrap_auth.ed25519_ix_index,
-                );
+                    user: forwarder_info.solana_account,
+                    nonce: wrap_auth.nonce,
+                    deadline: wrap_auth.deadline,
+                    action_tree_root: *action_root,
+                    signature: wrap_auth.signature,
+                    ed25519_ix_index: wrap_auth.ed25519_ix_index,
+                });
                 (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
             }
             CallType::Unwrap => {
@@ -421,6 +431,7 @@ mod tests {
     const WRAP_NONCE: u64 = 7;
     const WRAP_DEADLINE: i64 = 1_800_000_000;
     const ED25519_IX_INDEX: u8 = 0;
+    const WRAP_SIGNATURE: [u8; 64] = [0x5a; 64];
     const ACTION_TREE_ROOT: [u8; 32] = [0x99; 32];
     const ABOVE_U64: u128 = u64::MAX as u128 + 1;
 
@@ -480,15 +491,16 @@ mod tests {
         assert_eq!(call.instruction_data[0], OP_WRAP);
         assert_eq!(
             call.instruction_data,
-            encode_wrap_forwarder_input(
-                &SPL_TOKEN_MINT,
-                u64::MAX,
-                &USER,
-                WRAP_NONCE,
-                WRAP_DEADLINE,
-                &ACTION_TREE_ROOT,
-                ED25519_IX_INDEX,
-            )
+            encode_wrap_forwarder_input(&WrapInput {
+                token_mint: SPL_TOKEN_MINT,
+                amount: u64::MAX,
+                user: USER,
+                nonce: WRAP_NONCE,
+                deadline: WRAP_DEADLINE,
+                action_tree_root: ACTION_TREE_ROOT,
+                signature: WRAP_SIGNATURE,
+                ed25519_ix_index: ED25519_IX_INDEX,
+            })
         );
     }
 
@@ -515,6 +527,7 @@ mod tests {
                 wrap_auth_info: Some(WrapAuthInfo {
                     nonce: WRAP_NONCE,
                     deadline: WRAP_DEADLINE,
+                    signature: WRAP_SIGNATURE,
                     ed25519_ix_index: ED25519_IX_INDEX,
                 }),
             }),
