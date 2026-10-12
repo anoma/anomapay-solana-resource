@@ -54,6 +54,9 @@ fn wrap_auth() -> WrapAuthInfo {
     WrapAuthInfo {
         nonce: WRAP_NONCE,
         deadline: WRAP_DEADLINE,
+        // The circuit commits the signature; the ed25519 instruction, not the
+        // circuit, verifies it.
+        signature: [0x5a; 64],
         ed25519_ix_index: ED25519_IX_INDEX,
     }
 }
@@ -270,7 +273,12 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         info: wrap_auth(),
     };
     // base64 of a 32-byte hash: what the wallet signs.
-    assert_eq!(wrap.signed_message(&auth).unwrap().len(), 44);
+    assert_eq!(
+        wrap.signed_message(WRAP_NONCE, WRAP_DEADLINE)
+            .unwrap()
+            .len(),
+        44
+    );
     let (_, discovery_pk) = random_keypair();
     let wrap_tx = prove(
         &wrap
@@ -337,12 +345,8 @@ fn test_wrap() -> Wrap {
 fn wrap_signed_message_rejects_quantity_above_u64() {
     let mut wrap = test_wrap();
     wrap.consumed.quantity = u64::MAX as u128 + 1;
-    let auth = WrapAuth {
-        user: SOLANA_ACCOUNT,
-        info: wrap_auth(),
-    };
     let err = wrap
-        .signed_message(&auth)
+        .signed_message(WRAP_NONCE, WRAP_DEADLINE)
         .expect_err("a quantity above u64::MAX must not be signed as an SPL amount");
     assert!(
         err.to_string().contains("exceeds u64::MAX"),
