@@ -54,8 +54,6 @@ fn wrap_auth() -> WrapAuthInfo {
     WrapAuthInfo {
         nonce: WRAP_NONCE,
         deadline: WRAP_DEADLINE,
-        // The circuit commits the signature; the ed25519 instruction, not the
-        // circuit, verifies it.
         signature: [0x5a; 64],
         ed25519_ix_index: ED25519_IX_INDEX,
     }
