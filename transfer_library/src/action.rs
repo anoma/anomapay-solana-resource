@@ -7,8 +7,9 @@
 use anoma_rm_risc0::{
     Digest,
     action_tree::ActionTree,
-    compliance::{ComplianceWitness, INITIAL_ROOT, KindTableEntry},
+    compliance::{ComplianceWitness, INITIAL_ROOT},
     error::ArmError,
+    kind_table::KindTable,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     resource::{ConsumedResourceWitness, Resource},
@@ -40,10 +41,24 @@ impl Owner {
 }
 
 /// The compliance facts the deployment fixes: the commitment randomness of
-/// the action's compliance unit and the kind table the adapter pins.
-pub struct ComplianceParams {
+/// the action's compliance unit and the kind table the adapter pins, which
+/// gives each resource it lists its kind point.
+pub struct ComplianceParams<'a> {
     pub rcv: Vec<u8>,
-    pub kind_table: Vec<KindTableEntry>,
+    pub kind_table: &'a KindTable,
+}
+
+/// The compliance witness of an action consuming `consumed` and creating
+/// `created`, with each resource's path in the deployment's kind table.
+fn compliance_witness(
+    consumed: ConsumedResourceWitness,
+    created: Resource,
+    compliance: ComplianceParams<'_>,
+) -> ComplianceWitness {
+    let consumed = vec![consumed];
+    let created = vec![created];
+    let kind_paths = compliance.kind_table.kind_paths_for(&consumed, &created);
+    ComplianceWitness::from_parts(consumed, created, INITIAL_ROOT, &compliance.rcv, kind_paths)
 }
 
 /// The user's ed25519 authorization of a wrap, as the forwarder checks it:
@@ -170,20 +185,15 @@ impl Wrap {
         &self,
         auth: WrapAuth,
         discovery_pk: &AffinePoint,
-        compliance: ComplianceParams,
+        compliance: ComplianceParams<'_>,
         rng: &mut impl CryptoRngCore,
     ) -> Result<TransferAction, ArmError> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
-            compliance_witness: ComplianceWitness::from_parts(
-                vec![ConsumedResourceWitness::from_resource(
-                    self.consumed,
-                    NullifierKey::default(),
-                )],
-                vec![self.created],
-                INITIAL_ROOT,
-                &compliance.rcv,
-                compliance.kind_table,
+            compliance_witness: compliance_witness(
+                ConsumedResourceWitness::from_resource(self.consumed, NullifierKey::default()),
+                self.created,
+                compliance,
             ),
             consumed_logic: TransferLogic::mint_resource_logic_with_wrap_auth(
                 self.consumed,
@@ -252,20 +262,18 @@ impl Unwrap {
         &self,
         auth_sig: AuthoritySignature,
         cm_merkle_path: MerklePath,
-        compliance: ComplianceParams,
+        compliance: ComplianceParams<'_>,
     ) -> Result<TransferAction, ArmError> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
-            compliance_witness: ComplianceWitness::from_parts(
-                vec![ConsumedResourceWitness::from_resource_with_path(
+            compliance_witness: compliance_witness(
+                ConsumedResourceWitness::from_resource_with_path(
                     self.consumed,
                     self.owner.nf_key.clone(),
                     cm_merkle_path,
-                )],
-                vec![self.created],
-                INITIAL_ROOT,
-                &compliance.rcv,
-                compliance.kind_table,
+                ),
+                self.created,
+                compliance,
             ),
             consumed_logic: TransferLogic::consume_persistent_resource_logic(
                 self.consumed,

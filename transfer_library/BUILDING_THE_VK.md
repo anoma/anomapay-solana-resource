@@ -29,8 +29,13 @@ checked-in source.
 
 ## Required invariants
 
-1. **Pin arm-risc0 with the same source the Solana adapter pins (today
-   the crates.io release `=2.0.0-rc.6`), and let the committed lockfiles fix the version.** Cargo
+1. **Take arm-risc0 from the same source the Solana adapter does (today
+   crates.io, `2.0.0-rc.7`), and let the committed lockfiles fix the version.**
+   The requirement is a caret one, as the ERC20 resource's: a consumer that
+   links this crate with other circuit crates (the kind tables link every
+   active circuit) resolves one arm-risc0 for all of them, and an exact
+   requirement would refuse any release but this one. The lockfiles, not the
+   requirement, fix what the guest builds with. Cargo
    treats `?branch=main` and `?rev=<sha>` of the same commit as two sources and
    links both copies of the crates, so a consumer that pins arm-risc0 one way
    cannot share types with a crate that pins it the other way; the SPL token
