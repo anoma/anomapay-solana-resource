@@ -5,8 +5,8 @@
 // set it when running these locally.
 use anoma_rm_risc0::{
     Digest,
-    compliance::hash_kind_table_entries,
     delta_proof::DeltaWitness,
+    kind_table::KindTable,
     logic_instance::LogicInstance,
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
     merkle_path::MerklePath,
@@ -22,6 +22,7 @@ use anoma_rm_risc0_gadgets::{
 use k256::{AffinePoint, Scalar};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRngCore, OsRng, SeedableRng};
+use std::sync::LazyLock;
 use transfer_witness::{
     AUTH_SIGNATURE_DOMAIN, LabelInfo, LogicCircuit, ResourceWithLabel, TokenTransferWitness,
     ValueInfo, WrapAuthInfo, calculate_label_ref, calculate_persistent_value_ref,
@@ -214,12 +215,15 @@ fn test_transfer() {
     assert_eq!(plaintext.as_bytes(), bincode::serialize(&expected).unwrap());
 }
 
+/// The empty kind table, which the adapter accepts whatever table it stores.
+static EMPTY_KIND_TABLE: LazyLock<KindTable> = LazyLock::new(KindTable::empty);
+
 /// The deployment facts of the action tests: a fixed commitment randomness
-/// and the empty kind table the adapter pins today.
-fn compliance_params() -> ComplianceParams {
+/// and the empty kind table.
+fn compliance_params() -> ComplianceParams<'static> {
     ComplianceParams {
         rcv: Scalar::ONE.to_bytes().to_vec(),
-        kind_table: vec![],
+        kind_table: &EMPTY_KIND_TABLE,
     }
 }
 
@@ -254,7 +258,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         value: owner_value(),
         nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
     };
-    let kind_table_commitment = hash_kind_table_entries(&[]);
+    let kind_table_root = EMPTY_KIND_TABLE.root();
 
     let wrap = wrap(
         label(),
@@ -283,12 +287,8 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
             .action(auth, &discovery_pk, compliance_params(), &mut OsRng)
             .unwrap(),
     );
-    anoma_rm_risc0::transaction::verify(
-        &wrap_tx,
-        kind_table_commitment,
-        JournalEncoding::Risc0Serde,
-    )
-    .unwrap();
+    anoma_rm_risc0::transaction::verify(&wrap_tx, kind_table_root, JournalEncoding::Risc0Serde)
+        .unwrap();
     assert_eq!(
         tags_of(&wrap_tx),
         vec![
@@ -312,12 +312,8 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
             .action(auth_sig, MerklePath::empty(), compliance_params())
             .unwrap(),
     );
-    anoma_rm_risc0::transaction::verify(
-        &unwrap_tx,
-        kind_table_commitment,
-        JournalEncoding::Risc0Serde,
-    )
-    .unwrap();
+    anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_table_root, JournalEncoding::Risc0Serde)
+        .unwrap();
     assert_eq!(
         tags_of(&unwrap_tx),
         vec![
