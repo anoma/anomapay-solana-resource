@@ -43,35 +43,31 @@ checked-in source.
    adapter's harness, so the two must agree. The
    guest depends on `transfer_witness` by path, and cargo resolves that crate's
    `{ workspace = true }` dependencies against the repository root, so the root
-   pin governs the guest too. Because a branch pin re-resolves whenever a
-   lockfile is regenerated, never regenerate a lockfile blindly (invariant 3);
-   the committed locks are the rev pin.
+   pin governs the guest too. Never regenerate a lockfile blindly (invariant
+   3): the committed locks fix every version the guest builds with.
 
 2. **Any change of a git dependency's source id rotates the VK.** Cargo derives
    each crate's metadata hash from its package id, which includes the git URL,
    branch or tag, and rev. Moving a pin from a branch to a tag, from a rev to a
    branch, or to a newer rev, changes the arm crates' symbol hashes and
    therefore the ELF, even when their source is byte-identical. Plan every
-   re-pin, including the lockfile's rev, as a rotation with its own
-   `VK_HISTORY.md` row.
+   re-pin as a rotation with its own `VK_HISTORY.md` row.
 
-3. **Commit BOTH lockfiles (root and guest) with `rev=` git sources and
-   transitive versions that compile under the guest toolchain.** After changing
-   a pin, convert each lock's git sources in place without bumping the rest
-   (the arm crates are `=` pins on crates.io, which the manifest alone fixes):
+3. **Commit BOTH lockfiles (root and guest) with the git sources the manifest
+   names and transitive versions that compile under the guest toolchain.** The
+   Solana crates are pinned by their release tags (`bindings/v*`). After
+   changing a tag, re-lock that source in each lock without bumping the rest
+   (`cargo fetch` resolves only what the manifest changed):
 
    ```bash
    # root / host lock
-   cargo update -p anoma-pa-solana-client               --precise <rev>
-   cargo update -p anomapay-spl-token-forwarder-client  --precise <rev>
+   cargo fetch
    # guest lock
-   cd transfer_circuit
-   cargo update -p anoma-pa-solana-client               --precise <rev>
-   cargo update -p anomapay-spl-token-forwarder-client  --precise <rev>
+   cd transfer_circuit && cargo fetch
    ```
 
    The forwarder client depends on `anoma-pa-solana-client` itself; pin the
-   adapter client at the rev the forwarder client pins, or the guest links two
+   adapter client at the tag the forwarder client pins, or the guest links two
    copies of it.
 
    Do **not** run a blind `cargo update`. The host cargo resolves transitive
