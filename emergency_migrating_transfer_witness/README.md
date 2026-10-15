@@ -13,15 +13,17 @@ transfer logic of [`transfer_witness`](../transfer_witness) with two changes:
 
 ## `EmergencyMigratingTokenTransferWitness`
 
+`TokenTransferWitness<EmergencyMigratingCall>`: the transfer logic's witness,
+whose ephemeral resources trigger
+
 ```rust
-pub struct EmergencyMigratingTokenTransferWitness {
-    pub witness: TokenTransferWitness,       // the transfer logic's witness
-    pub migrate_info: Option<MigrateInfo>,   // a migration's trigger
+pub enum EmergencyMigratingCall {
+    Transfer(ForwarderInfo),   // a wrap or an unwrap, checked as the transfer logic checks it
+    Migrate(MigrateInfo),      // a migration
 }
 ```
 
-An ephemeral resource carries exactly one of `witness.forwarder_info` (a wrap
-or an unwrap, checked as the transfer logic checks it) and `migrate_info`.
+as the EVM resource's `EmergencyMigratingCallType` does.
 
 ## Migration
 

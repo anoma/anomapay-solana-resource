@@ -1,18 +1,27 @@
 //! Host-side construction of the AnomaPay wrap and unwrap actions: the
 //! resources each flow consumes and creates, and the witnesses that prove it.
+//! Each flow is of a logic `L`, the transfer logic or a logic that extends
+//! it, whose verifying key its resources carry and whose prover proves them.
 //! The caller supplies the keys, the deployment's compliance facts and the
-//! prover; a [`TransferAction`] is unproven until the caller's prover turns
-//! its witnesses into proofs.
+//! prover; a [`TransferAction`] is unproven until [`TransferAction::prove`]
+//! or the caller's own prover turns its witnesses into proofs.
+
+use std::marker::PhantomData;
 
 use anoma_rm_risc0::{
-    Digest,
+    Digest, action,
     action_tree::ActionTree,
     compliance::{ComplianceWitness, INITIAL_ROOT},
+    compliance_unit,
+    delta_proof::DeltaWitness,
     error::ArmError,
     kind_table::KindTable,
+    logic_proof::LogicProver,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
+    proving_system::ProofType,
     resource::{ConsumedResourceWitness, Resource},
+    transaction::{self, Delta, Transaction},
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
 use anomapay_spl_token_forwarder_client::WrapMessage;
@@ -48,9 +57,42 @@ pub struct ComplianceParams<'a> {
     pub kind_table: &'a KindTable,
 }
 
+/// The user's ed25519 authorization of a wrap, as the forwarder checks it:
+/// the Solana account whose tokens are wrapped and whose signature the
+/// ed25519 instruction carries, and the terms it signed with the signature.
+pub struct WrapAuth {
+    pub user: [u8; 32],
+    pub info: WrapAuthInfo,
+}
+
+/// One AnomaPay action, unproven: the compliance witness over its one
+/// consumed and one created resource, and each resource's logic witness,
+/// in tag order.
+pub struct TransferAction<L = TransferLogic> {
+    pub compliance_witness: ComplianceWitness,
+    pub consumed_logic: L,
+    pub created_logic: L,
+}
+
+impl<L: LogicProver> TransferAction<L> {
+    /// Proves the action in-process with `proof_type` and wraps it in a
+    /// balanced transaction.
+    pub fn prove(&self, proof_type: ProofType) -> Result<Transaction, ArmError> {
+        let compliance_unit = compliance_unit::create(&self.compliance_witness, proof_type)?;
+        let consumed = self.consumed_logic.prove(proof_type)?;
+        let created = self.created_logic.prove(proof_type)?;
+        let action = action::new(compliance_unit, vec![consumed, created])?;
+        let delta_witness = DeltaWitness::from_bytes(&self.compliance_witness.rcv)?;
+        transaction::generate_delta_proof(Transaction::create(
+            vec![action],
+            Delta::Witness(delta_witness),
+        ))
+    }
+}
+
 /// The compliance witness of an action consuming `consumed` and creating
 /// `created`, with each resource's path in the deployment's kind table.
-pub fn compliance_witness(
+fn compliance_witness(
     consumed: ConsumedResourceWitness,
     created: Resource,
     compliance: ComplianceParams<'_>,
@@ -61,39 +103,9 @@ pub fn compliance_witness(
     ComplianceWitness::from_parts(consumed, created, INITIAL_ROOT, &compliance.rcv, kind_paths)
 }
 
-/// The user's ed25519 authorization of a wrap, as the forwarder checks it:
-/// the Solana account whose tokens are wrapped and whose signature the
-/// ed25519 instruction carries, and the terms it signed with the signature.
-pub struct WrapAuth {
-    pub user: [u8; 32],
-    pub info: WrapAuthInfo,
-}
-
-/// One AnomaPay action, unproven: the compliance witness over its one
-/// consumed and one created resource, and each resource's logic witness
-/// (`L`, the transfer logic or a logic that extends it), in tag order.
-pub struct TransferAction<L = TransferLogic> {
-    pub compliance_witness: ComplianceWitness,
-    pub consumed_logic: L,
-    pub created_logic: L,
-}
-
-impl TransferAction {
-    /// The action proven by a logic that extends the transfer logic, whose
-    /// guest proves the same witnesses: the action's resources must be of
-    /// that logic.
-    pub fn into_logic<L: From<TransferLogic>>(self) -> TransferAction<L> {
-        TransferAction {
-            compliance_witness: self.compliance_witness,
-            consumed_logic: self.consumed_logic.into(),
-            created_logic: self.created_logic.into(),
-        }
-    }
-}
-
 /// An ephemeral resource of the logic `logic_ref` under `label_ref`,
 /// nullified by the default key: ephemeral resources hide nothing.
-pub fn ephemeral_resource(
+fn ephemeral_resource(
     logic_ref: Digest,
     label_ref: Digest,
     value_ref: Digest,
@@ -112,83 +124,68 @@ pub fn ephemeral_resource(
     }
 }
 
-/// `owner`'s shielded resource of the logic `logic_ref` under `label_ref`,
-/// created by the action consuming the resource with nullifier
-/// `consumed_nf`, which its nonce derives from; `rand_seed` is its own.
-pub fn owned_resource(
-    logic_ref: Digest,
-    label_ref: Digest,
-    owner: &Owner,
-    quantity: u128,
-    consumed_nf: Digest,
-    rand_seed: [u8; 32],
-) -> Result<Resource, ArmError> {
-    Ok(Resource {
-        logic_ref,
-        label_ref,
-        value_ref: owner.value_ref(),
-        quantity,
-        is_ephemeral: false,
-        nonce: Resource::derive_nonce_from_nullifiers(0, &[consumed_nf])?,
-        nk_commitment: owner.nf_key.commit(),
-        rand_seed,
-    })
-}
-
 /// The action tree root of a one-consumed, one-created action: nullifier
 /// then commitment, the order the aggregation guest enforces.
-pub fn action_tree_root(consumed_nf: Digest, created: &Resource) -> Result<Digest, ArmError> {
+fn action_tree_root(consumed_nf: Digest, created: &Resource) -> Result<Digest, ArmError> {
     ActionTree::new(vec![consumed_nf, created.commitment()]).root()
 }
 
-/// A wrap: the user deposits `amount` of the label's mint into the
-/// forwarder's escrow, consuming an ephemeral resource whose logic commits
-/// the forwarder call, and creating the owner's shielded resource.
-pub struct Wrap {
+/// The resources of an action of the logic `L` that consumes an ephemeral
+/// resource under `label` and creates `owner`'s shielded resource of its
+/// quantity: a wrap's, or a call of an extending logic that brings a
+/// quantity into the shielded pool (the emergency-migrating logic's
+/// migration).
+pub struct Deposit<L = TransferLogic> {
     pub label: LabelInfo,
     pub owner: Owner,
     pub consumed: Resource,
     pub created: Resource,
+    logic: PhantomData<L>,
 }
 
-/// The resources of a wrap of `amount` under `label` for `owner`, of the
-/// logic `logic_ref` (the forwarder's: [`crate::TOKEN_TRANSFER_ID`], or a logic that
-/// extends it). `ephemeral_nonce` is the consumed resource's nonce, which its
-/// nullifier and therefore the created resource's nonce derive from;
-/// `rand_seed` is the created resource's.
-pub fn wrap(
-    logic_ref: Digest,
+/// The resources of a deposit of `quantity` under `label` for `owner`.
+/// `ephemeral_nonce` is the consumed resource's nonce, which its nullifier
+/// and therefore the created resource's nonce derive from; `rand_seed` is
+/// the created resource's.
+pub fn deposit<L: LogicProver>(
     label: LabelInfo,
-    amount: u64,
+    quantity: u128,
     ephemeral_nonce: [u8; 32],
     owner: Owner,
     rand_seed: [u8; 32],
-) -> Result<Wrap, ArmError> {
+) -> Result<Deposit<L>, ArmError> {
+    let logic_ref = L::verifying_key();
     let label_ref = calculate_label_ref(&label.forwarder_program_id, &label.spl_token_mint);
     let consumed = ephemeral_resource(
         logic_ref,
         label_ref,
         Digest::default(),
-        amount as u128,
+        quantity,
         ephemeral_nonce,
     );
-    let created = owned_resource(
+    let created = Resource {
         logic_ref,
         label_ref,
-        &owner,
-        amount as u128,
-        consumed.nullifier(&NullifierKey::default())?,
+        value_ref: owner.value_ref(),
+        quantity,
+        is_ephemeral: false,
+        nonce: Resource::derive_nonce_from_nullifiers(
+            0,
+            &[consumed.nullifier(&NullifierKey::default())?],
+        )?,
+        nk_commitment: owner.nf_key.commit(),
         rand_seed,
-    )?;
-    Ok(Wrap {
+    };
+    Ok(Deposit {
         label,
         owner,
         consumed,
         created,
+        logic: PhantomData,
     })
 }
 
-impl Wrap {
+impl<L: LogicProver + From<TransferLogic>> Deposit<L> {
     pub fn action_tree_root(&self) -> Result<Digest, ArmError> {
         action_tree_root(
             self.consumed.nullifier(&NullifierKey::default())?,
@@ -196,33 +193,17 @@ impl Wrap {
         )
     }
 
-    /// The text the user signs, for the forwarder nonce `nonce` and the
-    /// deadline `deadline`, and the ed25519 instruction carries: base64 of
-    /// the sha256 of the 120-byte wrap message the forwarder recomputes from
-    /// the proof-bound input. The signature goes into the [`WrapAuth`] the
-    /// action is built with.
-    pub fn signed_message(&self, nonce: u64, deadline: i64) -> Result<String, ArmError> {
-        Ok(WrapMessage {
-            forwarder_id: self.label.forwarder_program_id,
-            token_mint: self.label.spl_token_mint,
-            amount: spl_amount_from_quantity(self.consumed.quantity)?,
-            nonce,
-            deadline,
-            action_tree_root: self.action_tree_root()?.into(),
-        }
-        .base64_digest())
-    }
-
-    /// The action's witnesses. `discovery_pk` is the key the created
-    /// resource's discovery payload is encrypted to; the encryption keys and
-    /// nonces of the created resource's payloads are drawn from `rng`.
+    /// The action's witnesses: the consumed resource's logic is
+    /// `consumed_logic` of the action tree root; `discovery_pk` is the key
+    /// the created resource's discovery payload is encrypted to, and the
+    /// encryption keys and nonces of its payloads are drawn from `rng`.
     pub fn action(
         &self,
-        auth: WrapAuth,
+        consumed_logic: impl FnOnce(Digest) -> L,
         discovery_pk: &AffinePoint,
         compliance: ComplianceParams<'_>,
         rng: &mut impl CryptoRngCore,
-    ) -> Result<TransferAction, ArmError> {
+    ) -> Result<TransferAction<L>, ArmError> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
             compliance_witness: compliance_witness(
@@ -230,14 +211,7 @@ impl Wrap {
                 self.created,
                 compliance,
             ),
-            consumed_logic: TransferLogic::mint_resource_logic_with_wrap_auth(
-                self.consumed,
-                root,
-                NullifierKey::default(),
-                self.label.clone(),
-                auth.user,
-                auth.info,
-            ),
+            consumed_logic: consumed_logic(root),
             created_logic: TransferLogic::create_persistent_resource_logic(
                 self.created,
                 root,
@@ -245,31 +219,107 @@ impl Wrap {
                 self.owner.value.clone(),
                 self.label.clone(),
                 rng,
-            ),
+            )
+            .into(),
         })
+    }
+}
+
+/// A wrap: the user deposits `amount` of the label's mint into the
+/// forwarder's escrow, consuming an ephemeral resource whose logic commits
+/// the forwarder call, and creating the owner's shielded resource.
+pub struct Wrap<L = TransferLogic> {
+    pub deposit: Deposit<L>,
+}
+
+/// The resources of a wrap of `amount` under `label` for `owner`, of the
+/// logic `L` (the forwarder's). `ephemeral_nonce` and `rand_seed` are as
+/// [`deposit`]'s.
+pub fn wrap<L: LogicProver>(
+    label: LabelInfo,
+    amount: u64,
+    ephemeral_nonce: [u8; 32],
+    owner: Owner,
+    rand_seed: [u8; 32],
+) -> Result<Wrap<L>, ArmError> {
+    Ok(Wrap {
+        deposit: deposit(label, amount as u128, ephemeral_nonce, owner, rand_seed)?,
+    })
+}
+
+impl<L: LogicProver + From<TransferLogic>> Wrap<L> {
+    /// The text the user signs, for the forwarder nonce `nonce` and the
+    /// deadline `deadline`, and the ed25519 instruction carries: base64 of
+    /// the sha256 of the 120-byte wrap message the forwarder recomputes from
+    /// the proof-bound input. The signature goes into the [`WrapAuth`] the
+    /// action is built with.
+    pub fn signed_message(&self, nonce: u64, deadline: i64) -> Result<String, ArmError> {
+        let deposit = &self.deposit;
+        Ok(WrapMessage {
+            forwarder_id: deposit.label.forwarder_program_id,
+            token_mint: deposit.label.spl_token_mint,
+            amount: spl_amount_from_quantity(deposit.consumed.quantity)?,
+            nonce,
+            deadline,
+            action_tree_root: deposit.action_tree_root()?.into(),
+        }
+        .base64_digest())
+    }
+
+    /// The action's witnesses, `discovery_pk` and `rng` as
+    /// [`Deposit::action`]'s.
+    pub fn action(
+        &self,
+        auth: WrapAuth,
+        discovery_pk: &AffinePoint,
+        compliance: ComplianceParams<'_>,
+        rng: &mut impl CryptoRngCore,
+    ) -> Result<TransferAction<L>, ArmError> {
+        let deposit = &self.deposit;
+        deposit.action(
+            |root| {
+                TransferLogic::mint_resource_logic_with_wrap_auth(
+                    deposit.consumed,
+                    root,
+                    NullifierKey::default(),
+                    deposit.label.clone(),
+                    auth.user,
+                    auth.info,
+                )
+                .into()
+            },
+            discovery_pk,
+            compliance,
+            rng,
+        )
     }
 }
 
 /// An unwrap: the owner spends a shielded resource into an ephemeral one
 /// whose logic commits the forwarder call releasing the escrowed tokens to
 /// `recipient`.
-pub struct Unwrap {
+pub struct Unwrap<L = TransferLogic> {
     pub label: LabelInfo,
     pub owner: Owner,
     pub recipient: [u8; 32],
     pub consumed: Resource,
     pub created: Resource,
+    logic: PhantomData<L>,
 }
 
-/// The resources of an unwrap of `wrapped`, `owner`'s shielded resource
-/// under `label`, to the Solana account `recipient`, through the logic of
-/// `wrapped`.
-pub fn unwrap(
+/// The resources of an unwrap of `wrapped`, `owner`'s shielded resource of
+/// the logic `L` under `label`, to the Solana account `recipient`.
+pub fn unwrap<L: LogicProver>(
     label: LabelInfo,
     wrapped: Resource,
     owner: Owner,
     recipient: [u8; 32],
-) -> Result<Unwrap, ArmError> {
+) -> Result<Unwrap<L>, ArmError> {
+    if wrapped.logic_ref != L::verifying_key() {
+        return Err(ArmError::ProveFailed(
+            "The unwrapped resource is not of the unwrap's logic".to_string(),
+        ));
+    }
     let created = ephemeral_resource(
         wrapped.logic_ref,
         wrapped.label_ref,
@@ -283,11 +333,12 @@ pub fn unwrap(
         recipient,
         consumed: wrapped,
         created,
+        logic: PhantomData,
     })
 }
 
-impl Unwrap {
-    /// What the owner signs under `AUTH_SIGNATURE_DOMAIN`.
+impl<L: LogicProver + From<TransferLogic>> Unwrap<L> {
+    /// What the owner signs under the logic's domain.
     pub fn action_tree_root(&self) -> Result<Digest, ArmError> {
         action_tree_root(self.consumed.nullifier(&self.owner.nf_key)?, &self.created)
     }
@@ -300,7 +351,7 @@ impl Unwrap {
         auth_sig: AuthoritySignature,
         cm_merkle_path: MerklePath,
         compliance: ComplianceParams<'_>,
-    ) -> Result<TransferAction, ArmError> {
+    ) -> Result<TransferAction<L>, ArmError> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
             compliance_witness: compliance_witness(
@@ -318,13 +369,15 @@ impl Unwrap {
                 self.owner.nf_key.clone(),
                 self.owner.value.clone(),
                 auth_sig,
-            ),
+            )
+            .into(),
             created_logic: TransferLogic::burn_resource_logic(
                 self.created,
                 root,
                 self.label.clone(),
                 self.recipient,
-            ),
+            )
+            .into(),
         })
     }
 }

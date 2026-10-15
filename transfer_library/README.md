@@ -20,14 +20,16 @@ constructors build the witness for each supported flow:
 `action::wrap` and `action::unwrap` build a flow's resources from its keys and
 terms: the ephemeral resource a wrap consumes and the owner's shielded resource
 it creates, or the shielded resource an unwrap consumes and the ephemeral one it
-creates for the recipient. A wrap's resources are of the logic it is given
-(`TOKEN_TRANSFER_ID`, or a logic that extends this one), an unwrap's of the
-resource it spends. `Wrap::signed_message` is the text the user's wallet
-signs, and `Wrap::action` / `Unwrap::action` produce a `TransferAction`: the
-compliance witness and both transfer-logic witnesses, in tag order, for the
-caller's prover (in-process, a proving queue, a mock prover).
-`TransferAction::into_logic` hands the same witnesses to a logic that extends
-this one, such as the emergency-migrating logic.
+creates for the recipient. Each flow is of a logic `L`, `TransferLogic` or a
+logic that extends it (`wrap::<TransferLogic>(..)`): its resources carry
+`L`'s verifying key and its witnesses are `L`'s. A wrap's resources are a
+`Deposit`, the shape any call bringing a quantity into the shielded pool
+shares. `Wrap::signed_message` is the text the user's wallet signs, and
+`Wrap::action` / `Unwrap::action` produce a `TransferAction<L>`: the
+compliance witness and both logic witnesses, in tag order, which
+`TransferAction::prove` proves in-process into a balanced transaction, or
+which a caller with its own prover (a proving queue, a mock prover) proves
+itself.
 
 ## Guest artifacts
 

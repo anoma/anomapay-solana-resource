@@ -4,9 +4,11 @@
 //!
 //! `EmergencyMigratingTransferLogic` proves an
 //! `EmergencyMigratingTokenTransferWitness` with this logic's guest. The
-//! transfer logic's flows convert into it (`From<TransferLogic>`), with owner
-//! signatures under `EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN`, and
-//! [`action::migrate`] builds a migration.
+//! transfer logic's flows convert into it (`From<TransferLogic>`), so
+//! `transfer_library`'s builders build this logic's wraps and unwraps
+//! (`wrap::<EmergencyMigratingTransferLogic>`), with owner signatures under
+//! `EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN`; [`action::migrate`] builds a
+//! migration.
 
 pub mod action;
 #[cfg(test)]
@@ -17,7 +19,7 @@ use anoma_rm_risc0::{
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
 use emergency_migrating_transfer_witness::{
-    EmergencyMigratingTokenTransferWitness, MigrateEntry, MigrateInfo,
+    EmergencyMigratingCall, EmergencyMigratingTokenTransferWitness, MigrateEntry, MigrateInfo,
 };
 use hex_literal::hex;
 use serde::{Deserialize, Serialize};
@@ -31,7 +33,7 @@ pub const EMERGENCY_MIGRATING_TOKEN_TRANSFER_ELF: &[u8] =
 
 /// The identity of the binary that executes the proofs in the zkvm.
 pub const EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID: Digest = Digest::from_bytes(hex!(
-    "516cf6822908a5f95bffaed3f3931f598f6cb1ae95232c1e077c83d148f5267d"
+    "66dc8661b9dd555a417180c4938fa993b1c6b54bc2a0e0b9e025068be3a045a7"
 ));
 
 /// Holds the emergency-migrating resource logic of one resource.
@@ -46,10 +48,7 @@ pub struct EmergencyMigratingTransferLogic {
 impl From<TransferLogic> for EmergencyMigratingTransferLogic {
     fn from(logic: TransferLogic) -> Self {
         Self {
-            witness: EmergencyMigratingTokenTransferWitness {
-                witness: logic.witness,
-                migrate_info: None,
-            },
+            witness: logic.witness.into_call(),
         }
     }
 }
@@ -68,16 +67,17 @@ impl EmergencyMigratingTransferLogic {
         entries: Vec<MigrateEntry>,
     ) -> Self {
         Self {
-            witness: EmergencyMigratingTokenTransferWitness {
-                witness: TokenTransferWitness {
-                    resource,
-                    is_consumed: true,
-                    action_tree_root,
-                    nf_key: Some(nf_key),
-                    label_info: Some(label),
-                    ..Default::default()
-                },
-                migrate_info: Some(MigrateInfo { auth_sig, entries }),
+            witness: TokenTransferWitness {
+                resource,
+                is_consumed: true,
+                action_tree_root,
+                nf_key: Some(nf_key),
+                forwarder_info: Some(EmergencyMigratingCall::Migrate(MigrateInfo {
+                    auth_sig,
+                    entries,
+                })),
+                label_info: Some(label),
+                ..Default::default()
             },
         }
     }

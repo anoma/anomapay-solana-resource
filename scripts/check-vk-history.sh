@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# Refuse to ship a change of a circuit's VK (TOKEN_TRANSFER_ID,
-# EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID) without a matching entry in its
-# library's VK_HISTORY.md.
+# Refuse to ship a change of a circuit's VK without a matching entry in its
+# library's VK_HISTORY.md, for every library (`*_library`).
 #
 # Run from repo root:  ./scripts/check-vk-history.sh
 #
@@ -12,8 +11,6 @@
 # merges, and to local runs. The author's commitment is the *entry*; CI just
 # enforces that the entry exists.
 set -euo pipefail
-
-LIBRARIES=(transfer_library emergency_migrating_transfer_library)
 
 check_library() {
   local lib_rs="$1/src/lib.rs"
@@ -60,6 +57,6 @@ check_library() {
   echo "✅ The VK in $lib_rs is documented in $history: $current_vk"
 }
 
-for library in "${LIBRARIES[@]}"; do
+for library in *_library; do
   check_library "$library"
 done

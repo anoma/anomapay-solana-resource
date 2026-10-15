@@ -35,13 +35,11 @@ jobs:
       - name: cargo fmt (workspace)
         run: cargo fmt --all --check
 
-      - name: cargo fmt (transfer_circuit)
-        working-directory: transfer_circuit
-        run: cargo fmt --all --check
-
-      - name: cargo fmt (emergency_migrating_transfer_circuit)
-        working-directory: emergency_migrating_transfer_circuit
-        run: cargo fmt --all --check
+      - name: cargo fmt (each circuit)
+        run: |
+          for circuit in *_circuit; do
+            (cd "$circuit" && cargo fmt --all --check)
+          done
 
       - name: Install taplo
         uses: taiki-e/install-action@v2
@@ -61,7 +59,7 @@ jobs:
         # A second copy means our tag differs from the one the forwarder
         # client pins, and the guest links the adapter client twice.
         run: |
-          for lock in Cargo.lock transfer_circuit/Cargo.lock emergency_migrating_transfer_circuit/Cargo.lock; do
+          for lock in Cargo.lock *_circuit/Cargo.lock; do
             count=$(awk '$0 == "name = \"anoma-pa-solana-client\"" { n++ } END { print n + 0 }' "$lock")
             if [ "$count" -ne 1 ]; then
               echo "❌ $lock has $count anoma-pa-solana-client packages, expected 1." >&2
@@ -109,19 +107,25 @@ jobs:
       - name: cargo clippy (workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  circuits:
+    name: List the circuits
+    runs-on: ubuntu-latest
+    outputs:
+      circuits: ${{ steps.list.outputs.circuits }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: list
+        run: echo "circuits=$(ls -d *_circuit | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
   guest-reproducibility:
     name: Rebuild ${{ matrix.circuit }} and check its VK
+    needs: circuits
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - circuit: transfer_circuit
-            guest: token-transfer-guest
-            library: transfer_library
-          - circuit: emergency_migrating_transfer_circuit
-            guest: emergency-migrating-token-transfer-guest
-            library: emergency_migrating_transfer_library
+        circuit: ${{ fromJSON(needs.circuits.outputs.circuits) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -142,9 +146,14 @@ jobs:
         run: cargo risczero build --manifest-path ${{ matrix.circuit }}/Cargo.toml
 
       - name: Compare with the embedded guest
+        # A circuit `<x>_circuit` builds the guest its package names, which
+        # the library `<x>_library` embeds.
+        env:
+          CIRCUIT: ${{ matrix.circuit }}
         run: |
-          built=${{ matrix.circuit }}/target/riscv32im-risc0-zkvm-elf/docker/${{ matrix.guest }}.bin
-          embedded=${{ matrix.library }}/elf/${{ matrix.guest }}.bin
+          guest=$(sed -n 's/^name = "\(.*\)"$/\1/p' "$CIRCUIT/Cargo.toml")
+          built=$CIRCUIT/target/riscv32im-risc0-zkvm-elf/docker/$guest.bin
+          embedded=${CIRCUIT%_circuit}_library/elf/$guest.bin
           if ! cmp "$built" "$embedded"; then
             echo "❌ The guest built from source differs from $embedded." >&2
             echo "   Rebuild with cargo risczero build, embed the ELF, set the library's VK, record the rotation in its VK_HISTORY.md." >&2

@@ -8,19 +8,18 @@ emergency-migrating logic, the port of the EVM ERC20 resource's
 
 Wraps an `EmergencyMigratingTokenTransferWitness` and implements ARM's
 `LogicProver` with this logic's guest. Every `TransferLogic` flow converts
-into it (`From<TransferLogic>`); a consumed persistent resource's signature is
-then under `EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN`.
+into it (`From<TransferLogic>`), so `transfer_library`'s builders build this
+logic's wraps and unwraps (`wrap::<EmergencyMigratingTransferLogic>(..)`); a
+consumed persistent resource's signature is then under
+`EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN`.
 `migrate_resource_logic` builds a migration's trigger.
 
 ## Actions
 
 `action::migrate` builds a migration from the entries and the new owner: the
 ephemeral trigger it consumes and the owner's resource of this logic it
-creates, holding the batch's total. `Migrate::action` produces a
-`TransferAction<EmergencyMigratingTransferLogic>` for the caller's prover.
-Wraps and unwraps of this logic's resources come from `transfer_library`'s
-builders (`wrap` with this logic's ID, `unwrap` of this logic's resource),
-with `TransferAction::into_logic`.
+creates, holding the batch's total (a `transfer_library` `Deposit`).
+`Migrate::action` produces a `TransferAction<EmergencyMigratingTransferLogic>`.
 
 ## Guest artifacts
 

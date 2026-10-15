@@ -45,9 +45,11 @@ on the resource:
 - `LabelInfo`, `ValueInfo`, `EncryptionInfo`, `ResourceWithLabel`.
 - `calculate_label_ref`, `calculate_persistent_value_ref`,
   `calculate_value_ref_from_solana_account`, `spl_amount_from_quantity`.
-- `constrain_with(domain, ephemeral_resource_check)`, `label()` and
-  `external_call_payload`, which a logic extending this one
-  (`emergency_migrating_transfer_witness`) builds on.
+- `ForwarderCall`: the call an ephemeral resource triggers, which fixes the
+  owners' signing domain. `TokenTransferWitness<C = ForwarderInfo>` is
+  generic over it, so a logic extending this one
+  (`emergency_migrating_transfer_witness`) reuses every check with its own
+  call; `into_call` carries a witness over to it.
 
 ## `call_type`
 
