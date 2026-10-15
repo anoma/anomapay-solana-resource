@@ -63,9 +63,9 @@ checked-in source.
 
 3. **Commit every lockfile (the root's and each guest's) with the git sources
    the manifest names and transitive versions that compile under the guest
-   toolchain.** The Solana crates are pinned by their release tags
-   (`bindings/v*`), or by commit while the commit the circuits need is not
-   released yet. After changing a pin, re-lock that source in each lock without
+   toolchain.** The Solana crates are pinned by a release tag
+   (`bindings/v*`) when one has what the circuits need, and by commit
+   otherwise. After changing a pin, re-lock that source in each lock without
    bumping the rest (`cargo fetch` resolves only what the manifest changed):
 
    ```bash
