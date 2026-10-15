@@ -23,7 +23,7 @@ use transfer_witness::{
     calculate_value_ref_from_solana_account, spl_amount_from_quantity,
 };
 
-use crate::{TOKEN_TRANSFER_ID, TransferLogic};
+use crate::TransferLogic;
 
 /// The keys a shielded resource's owner holds, as the resource commits to
 /// them: the authorization and encryption public keys behind its value
@@ -50,7 +50,7 @@ pub struct ComplianceParams<'a> {
 
 /// The compliance witness of an action consuming `consumed` and creating
 /// `created`, with each resource's path in the deployment's kind table.
-fn compliance_witness(
+pub fn compliance_witness(
     consumed: ConsumedResourceWitness,
     created: Resource,
     compliance: ComplianceParams<'_>,
@@ -70,24 +70,38 @@ pub struct WrapAuth {
 }
 
 /// One AnomaPay action, unproven: the compliance witness over its one
-/// consumed and one created resource, and each resource's transfer-logic
-/// witness, in tag order.
-pub struct TransferAction {
+/// consumed and one created resource, and each resource's logic witness
+/// (`L`, the transfer logic or a logic that extends it), in tag order.
+pub struct TransferAction<L = TransferLogic> {
     pub compliance_witness: ComplianceWitness,
-    pub consumed_logic: TransferLogic,
-    pub created_logic: TransferLogic,
+    pub consumed_logic: L,
+    pub created_logic: L,
 }
 
-/// An ephemeral resource under `label_ref`, nullified by the default key:
-/// ephemeral resources hide nothing.
-fn ephemeral_resource(
+impl TransferAction {
+    /// The action proven by a logic that extends the transfer logic, whose
+    /// guest proves the same witnesses: the action's resources must be of
+    /// that logic.
+    pub fn into_logic<L: From<TransferLogic>>(self) -> TransferAction<L> {
+        TransferAction {
+            compliance_witness: self.compliance_witness,
+            consumed_logic: self.consumed_logic.into(),
+            created_logic: self.created_logic.into(),
+        }
+    }
+}
+
+/// An ephemeral resource of the logic `logic_ref` under `label_ref`,
+/// nullified by the default key: ephemeral resources hide nothing.
+pub fn ephemeral_resource(
+    logic_ref: Digest,
     label_ref: Digest,
     value_ref: Digest,
     quantity: u128,
     nonce: [u8; 32],
 ) -> Resource {
     Resource {
-        logic_ref: TOKEN_TRANSFER_ID,
+        logic_ref,
         label_ref,
         value_ref,
         quantity,
@@ -98,9 +112,32 @@ fn ephemeral_resource(
     }
 }
 
+/// `owner`'s shielded resource of the logic `logic_ref` under `label_ref`,
+/// created by the action consuming the resource with nullifier
+/// `consumed_nf`, which its nonce derives from; `rand_seed` is its own.
+pub fn owned_resource(
+    logic_ref: Digest,
+    label_ref: Digest,
+    owner: &Owner,
+    quantity: u128,
+    consumed_nf: Digest,
+    rand_seed: [u8; 32],
+) -> Result<Resource, ArmError> {
+    Ok(Resource {
+        logic_ref,
+        label_ref,
+        value_ref: owner.value_ref(),
+        quantity,
+        is_ephemeral: false,
+        nonce: Resource::derive_nonce_from_nullifiers(0, &[consumed_nf])?,
+        nk_commitment: owner.nf_key.commit(),
+        rand_seed,
+    })
+}
+
 /// The action tree root of a one-consumed, one-created action: nullifier
 /// then commitment, the order the aggregation guest enforces.
-fn action_tree_root(consumed_nf: Digest, created: &Resource) -> Result<Digest, ArmError> {
+pub fn action_tree_root(consumed_nf: Digest, created: &Resource) -> Result<Digest, ArmError> {
     ActionTree::new(vec![consumed_nf, created.commitment()]).root()
 }
 
@@ -114,11 +151,13 @@ pub struct Wrap {
     pub created: Resource,
 }
 
-/// The resources of a wrap of `amount` under `label` for `owner`.
-/// `ephemeral_nonce` is the consumed resource's nonce, which its nullifier
-/// and therefore the created resource's nonce derive from; `rand_seed` is
-/// the created resource's.
+/// The resources of a wrap of `amount` under `label` for `owner`, of the
+/// logic `logic_ref` (the forwarder's: [`crate::TOKEN_TRANSFER_ID`], or a logic that
+/// extends it). `ephemeral_nonce` is the consumed resource's nonce, which its
+/// nullifier and therefore the created resource's nonce derive from;
+/// `rand_seed` is the created resource's.
 pub fn wrap(
+    logic_ref: Digest,
     label: LabelInfo,
     amount: u64,
     ephemeral_nonce: [u8; 32],
@@ -127,24 +166,20 @@ pub fn wrap(
 ) -> Result<Wrap, ArmError> {
     let label_ref = calculate_label_ref(&label.forwarder_program_id, &label.spl_token_mint);
     let consumed = ephemeral_resource(
+        logic_ref,
         label_ref,
         Digest::default(),
         amount as u128,
         ephemeral_nonce,
     );
-    let created = Resource {
-        logic_ref: TOKEN_TRANSFER_ID,
+    let created = owned_resource(
+        logic_ref,
         label_ref,
-        value_ref: owner.value_ref(),
-        quantity: amount as u128,
-        is_ephemeral: false,
-        nonce: Resource::derive_nonce_from_nullifiers(
-            0,
-            &[consumed.nullifier(&NullifierKey::default())?],
-        )?,
-        nk_commitment: owner.nf_key.commit(),
+        &owner,
+        amount as u128,
+        consumed.nullifier(&NullifierKey::default())?,
         rand_seed,
-    };
+    )?;
     Ok(Wrap {
         label,
         owner,
@@ -227,7 +262,8 @@ pub struct Unwrap {
 }
 
 /// The resources of an unwrap of `wrapped`, `owner`'s shielded resource
-/// under `label`, to the Solana account `recipient`.
+/// under `label`, to the Solana account `recipient`, through the logic of
+/// `wrapped`.
 pub fn unwrap(
     label: LabelInfo,
     wrapped: Resource,
@@ -235,6 +271,7 @@ pub fn unwrap(
     recipient: [u8; 32],
 ) -> Result<Unwrap, ArmError> {
     let created = ephemeral_resource(
+        wrapped.logic_ref,
         wrapped.label_ref,
         calculate_value_ref_from_solana_account(&recipient),
         wrapped.quantity,

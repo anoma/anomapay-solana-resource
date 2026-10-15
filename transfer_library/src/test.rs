@@ -261,6 +261,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
     let kind_table_root = EMPTY_KIND_TABLE.root();
 
     let wrap = wrap(
+        TOKEN_TRANSFER_ID,
         label(),
         QUANTITY as u64,
         [5u8; 32],
@@ -330,7 +331,15 @@ fn test_wrap() -> Wrap {
         value: owner_value(),
         nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
     };
-    wrap(label(), QUANTITY as u64, [5u8; 32], owner, [6u8; 32]).unwrap()
+    wrap(
+        TOKEN_TRANSFER_ID,
+        label(),
+        QUANTITY as u64,
+        [5u8; 32],
+        owner,
+        [6u8; 32],
+    )
+    .unwrap()
 }
 
 /// The signed message carries the SPL amount the circuit commits to, so a

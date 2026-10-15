@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   vk-history:
-    name: Verify TOKEN_TRANSFER_ID is documented in VK_HISTORY.md
+    name: Verify each circuit's VK is documented in its VK_HISTORY.md
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +39,10 @@ jobs:
         working-directory: transfer_circuit
         run: cargo fmt --all --check
 
+      - name: cargo fmt (emergency_migrating_transfer_circuit)
+        working-directory: emergency_migrating_transfer_circuit
+        run: cargo fmt --all --check
+
       - name: Install taplo
         uses: taiki-e/install-action@v2
         with:
@@ -57,7 +61,7 @@ jobs:
         # A second copy means our tag differs from the one the forwarder
         # client pins, and the guest links the adapter client twice.
         run: |
-          for lock in Cargo.lock transfer_circuit/Cargo.lock; do
+          for lock in Cargo.lock transfer_circuit/Cargo.lock emergency_migrating_transfer_circuit/Cargo.lock; do
             count=$(awk '$0 == "name = \"anoma-pa-solana-client\"" { n++ } END { print n + 0 }' "$lock")
             if [ "$count" -ne 1 ]; then
               echo "❌ $lock has $count anoma-pa-solana-client packages, expected 1." >&2
@@ -106,8 +110,18 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   guest-reproducibility:
-    name: Rebuild the guest and check TOKEN_TRANSFER_ID
+    name: Rebuild ${{ matrix.circuit }} and check its VK
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - circuit: transfer_circuit
+            guest: token-transfer-guest
+            library: transfer_library
+          - circuit: emergency_migrating_transfer_circuit
+            guest: emergency-migrating-token-transfer-guest
+            library: emergency_migrating_transfer_library
     steps:
       - uses: actions/checkout@v4
 
@@ -125,14 +139,15 @@ jobs:
           echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
 
       - name: Build the guest in the reproducible builder
-        run: cargo risczero build --manifest-path transfer_circuit/Cargo.toml
+        run: cargo risczero build --manifest-path ${{ matrix.circuit }}/Cargo.toml
 
       - name: Compare with the embedded guest
         run: |
-          built=transfer_circuit/target/riscv32im-risc0-zkvm-elf/docker/token-transfer-guest.bin
-          if ! cmp "$built" transfer_library/elf/token-transfer-guest.bin; then
-            echo "❌ The guest built from source differs from transfer_library/elf/token-transfer-guest.bin." >&2
-            echo "   Rebuild with cargo risczero build, embed the ELF, set TOKEN_TRANSFER_ID, record the rotation in VK_HISTORY.md." >&2
+          built=${{ matrix.circuit }}/target/riscv32im-risc0-zkvm-elf/docker/${{ matrix.guest }}.bin
+          embedded=${{ matrix.library }}/elf/${{ matrix.guest }}.bin
+          if ! cmp "$built" "$embedded"; then
+            echo "❌ The guest built from source differs from $embedded." >&2
+            echo "   Rebuild with cargo risczero build, embed the ELF, set the library's VK, record the rotation in its VK_HISTORY.md." >&2
             exit 1
           fi
           echo "✅ the embedded guest reproduces from source"

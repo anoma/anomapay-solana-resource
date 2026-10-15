@@ -7,27 +7,36 @@ on the [RISC Zero](https://dev.risczero.com) zkVM.
 This repository packages the witness types, the resource-logic library, and the
 RISC Zero guest program that prove the validity of token-transfer resources
 backed by SPL tokens: wrap and unwrap through the SPL token forwarder, and
-transfers between shielded owners. The proving artifacts (guest ELF, `ImageID`, and the Rust APIs around
+transfers between shielded owners. A second circuit, the **emergency-migrating
+logic**, adds the migration of resources of a vulnerable logic through the
+emergency-migrating SPL token forwarder, as the EVM ERC20 resource's
+emergency-migrating crates do. The proving artifacts (guest ELF, `ImageID`, and the Rust APIs around
 them) are versioned here independently of the services that consume them.
 
 ## Layout
 
 Crates live at the repository root. The witness and library crates form one
-Cargo workspace; the circuit is its own **excluded** workspace because the RISC
+Cargo workspace; each circuit is its own **excluded** workspace because the RISC
 Zero guest is cross-compiled to the `riscv32im-risc0-zkvm-elf` target and must
 not share the host workspace's lockfile or profile.
 
 ```
 .
-├── transfer_witness/      # witness data + resource-logic constraints
-├── transfer_library/      # host API: TransferLogic, embedded guest ELF + ImageID
-└── transfer_circuit/      # RISC Zero guest program (excluded package)
+├── transfer_witness/                       # witness data + resource-logic constraints
+├── transfer_library/                       # host API: TransferLogic, embedded guest ELF + ImageID
+├── transfer_circuit/                       # RISC Zero guest program (excluded package)
+├── emergency_migrating_transfer_witness/   # the transfer logic plus migration
+├── emergency_migrating_transfer_library/   # host API: EmergencyMigratingTransferLogic, migrate builder, ELF + ImageID
+└── emergency_migrating_transfer_circuit/   # its RISC Zero guest program (excluded package)
 ```
 
 ### Dependency graph
 
 ```
 transfer_witness ──► transfer_circuit ──(ELF)──► transfer_library
+       │                                               │
+       ▼                                               ▼
+emergency_migrating_transfer_witness ──► emergency_migrating_transfer_circuit ──(ELF)──► emergency_migrating_transfer_library
 ```
 
 - `transfer_witness` is the leaf; the guest and the library both build on it.
@@ -64,6 +73,14 @@ verifying-key history and the migration record of every rotation.
 The RISC Zero guest program. It reads a `TokenTransferWitness`, runs
 `constrain()`, and commits the resulting `LogicInstance`.
 
+### `emergency_migrating_transfer_witness`, `emergency_migrating_transfer_library`, `emergency_migrating_transfer_circuit`
+The emergency-migrating logic: the transfer logic, with owner signatures under
+its own domain, plus a migration, which consumes an ephemeral trigger proving a
+batch of resources of a vulnerable logic and commits the emergency-migrating
+forwarder's migrate call. The library builds a migration (`action::migrate`)
+and embeds the guest ELF and `EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID`; see
+[`emergency_migrating_transfer_library/VK_HISTORY.md`](emergency_migrating_transfer_library/VK_HISTORY.md).
+
 ## Building
 
 The host workspace builds with a stable toolchain (see
@@ -79,8 +96,8 @@ and the reproducible builder; see
 
 ## Testing
 
-The circuit tests live in `transfer_library` (`src/test.rs`) and prove against
-the embedded guest ELF, so they exercise the real resource logic without
+The circuit tests live in the libraries (`src/test.rs`) and prove against
+the embedded guest ELFs, so they exercise the real resource logic without
 rebuilding the guest. Full STARK proving is slow; set `RISC0_DEV_MODE=1` to run
 them with fast (non-cryptographic) proofs:
 
@@ -90,8 +107,8 @@ RISC0_DEV_MODE=1 cargo test --workspace
 
 ## Versioning
 
-The workspace crates (`transfer_witness`, `transfer_library`) share the version
-in `[workspace.package]`. The circuit crate is versioned independently.
+The workspace crates share the version in `[workspace.package]`. The circuit
+crates are versioned independently.
 
 ## License
 

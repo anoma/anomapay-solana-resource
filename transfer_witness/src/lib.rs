@@ -189,6 +189,23 @@ impl TokenTransferWitness {
         Ok(value_info)
     }
 
+    /// The resource's label, checked against its label ref:
+    /// sha2(forwarder_program_id, spl_token_mint).
+    pub fn label(&self) -> Result<&LabelInfo, ArmError> {
+        let label_info = self
+            .label_info
+            .as_ref()
+            .ok_or(ArmError::MissingField("Label info"))?;
+        let label_ref =
+            calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
+        if self.resource.label_ref != label_ref {
+            return Err(ArmError::ProveFailed(
+                "Invalid resource label_ref".to_string(),
+            ));
+        }
+        Ok(label_info)
+    }
+
     /// Checks on ephemeral resources; returns the external_payload.
     pub fn ephemeral_resource_check(
         &self,
@@ -199,19 +216,7 @@ impl TokenTransferWitness {
             .as_ref()
             .ok_or(ArmError::MissingField("Forwarder info"))?;
 
-        let label_info = self
-            .label_info
-            .as_ref()
-            .ok_or(ArmError::MissingField("Label info"))?;
-
-        // Check resource label: label = sha2(forwarder_program_id, spl_token_mint)
-        let label_ref =
-            calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
-        if self.resource.label_ref != label_ref {
-            return Err(ArmError::ProveFailed(
-                "Invalid resource label_ref".to_string(),
-            ));
-        }
+        let label_info = self.label()?;
 
         let (inputs, num_accounts) = match forwarder_info.call_type {
             CallType::Wrap => {
@@ -265,24 +270,20 @@ impl TokenTransferWitness {
             }
         };
 
-        let call_data = SolanaExternalCall {
-            program_id: label_info.forwarder_program_id,
-            instruction_data: inputs,
-            // The forwarder returns the empty output, as the EVM ERC20
-            // forwarder does, whose resource expects it the same way.
-            expected_output: Vec::new(),
-            output_mode: OutputMode::ReturnData,
+        Ok(external_call_payload(
+            label_info.forwarder_program_id,
+            inputs,
             num_accounts,
-        };
-        let call_data_expirable_blob = ExpirableBlob {
-            blob: bytes_to_words(&call_data.encode()),
-            deletion_criterion: DeletionCriterion::Immediately as u32,
-        };
-        Ok(vec![call_data_expirable_blob])
+        ))
     }
 
-    /// Check persistent resource consumption.
-    pub fn persistent_resource_consumption(&self, action_root: &[u8; 32]) -> Result<(), ArmError> {
+    /// Check persistent resource consumption: the owner signed the action
+    /// tree root under `domain`.
+    pub fn persistent_resource_consumption(
+        &self,
+        domain: &[u8],
+        action_root: &[u8; 32],
+    ) -> Result<(), ArmError> {
         spl_amount_from_quantity(self.resource.quantity)?;
 
         let auth_sig = self
@@ -294,7 +295,7 @@ impl TokenTransferWitness {
 
         if value_info
             .auth_pk
-            .verify(AUTH_SIGNATURE_DOMAIN, action_root, auth_sig)
+            .verify(domain, action_root, auth_sig)
             .is_err()
         {
             return Err(ArmError::InvalidSignature);
@@ -310,19 +311,7 @@ impl TokenTransferWitness {
     ) -> Result<(Vec<ExpirableBlob>, Vec<ExpirableBlob>), ArmError> {
         spl_amount_from_quantity(self.resource.quantity)?;
 
-        let label_info = self
-            .label_info
-            .as_ref()
-            .ok_or(ArmError::MissingField("Label info"))?;
-        let label_ref =
-            calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
-
-        if self.resource.label_ref != label_ref {
-            return Err(ArmError::ProveFailed(
-                "Invalid resource label_ref".to_string(),
-            ));
-        }
-
+        let label_info = self.label()?;
         let value_info = self.value()?;
 
         // Generate resource ciphertext.
@@ -366,15 +355,31 @@ impl TokenTransferWitness {
 
 impl LogicCircuit for TokenTransferWitness {
     fn constrain(&self) -> Result<LogicInstance, ArmError> {
+        self.constrain_with(AUTH_SIGNATURE_DOMAIN, |action_root| {
+            self.ephemeral_resource_check(action_root)
+        })
+    }
+}
+
+impl TokenTransferWitness {
+    /// The resource's logic instance, with the owner's signature checked
+    /// under `domain` and an ephemeral resource's external payload from
+    /// `ephemeral_resource_check`: the transfer logic's, or a logic that
+    /// extends it.
+    pub fn constrain_with(
+        &self,
+        domain: &[u8],
+        ephemeral_resource_check: impl FnOnce(&[u8; 32]) -> Result<Vec<ExpirableBlob>, ArmError>,
+    ) -> Result<LogicInstance, ArmError> {
         let tag = self.tag()?;
         let root_bytes: [u8; 32] = self.action_tree_root.into();
 
         let (discovery_payload, resource_payload, external_payload) = if self.resource.is_ephemeral
         {
-            let external_payload = self.ephemeral_resource_check(&root_bytes)?;
+            let external_payload = ephemeral_resource_check(&root_bytes)?;
             (vec![], vec![], external_payload)
         } else if self.is_consumed {
-            self.persistent_resource_consumption(&root_bytes)?;
+            self.persistent_resource_consumption(domain, &root_bytes)?;
             (vec![], vec![], vec![])
         } else {
             let (discovery_payload, resource_payload) = self.persistent_resource_creation()?;
@@ -395,6 +400,28 @@ impl LogicCircuit for TokenTransferWitness {
             app_data,
         })
     }
+}
+
+/// The external payload of a call of the forwarder `program_id` with
+/// `instruction_data` over a segment of `num_accounts` accounts.
+pub fn external_call_payload(
+    program_id: [u8; 32],
+    instruction_data: Vec<u8>,
+    num_accounts: u8,
+) -> Vec<ExpirableBlob> {
+    let call_data = SolanaExternalCall {
+        program_id,
+        instruction_data,
+        // The forwarder returns the empty output, as the EVM ERC20
+        // forwarder does, whose resource expects it the same way.
+        expected_output: Vec::new(),
+        output_mode: OutputMode::ReturnData,
+        num_accounts,
+    };
+    vec![ExpirableBlob {
+        blob: bytes_to_words(&call_data.encode()),
+        deletion_criterion: DeletionCriterion::Immediately as u32,
+    }]
 }
 
 /// Calculate the value ref based on an authorization key and an encryption key for a given user.

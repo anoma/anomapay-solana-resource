@@ -45,6 +45,9 @@ on the resource:
 - `LabelInfo`, `ValueInfo`, `EncryptionInfo`, `ResourceWithLabel`.
 - `calculate_label_ref`, `calculate_persistent_value_ref`,
   `calculate_value_ref_from_solana_account`, `spl_amount_from_quantity`.
+- `constrain_with(domain, ephemeral_resource_check)`, `label()` and
+  `external_call_payload`, which a logic extending this one
+  (`emergency_migrating_transfer_witness`) builds on.
 
 ## `call_type`
 
