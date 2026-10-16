@@ -124,10 +124,31 @@ pub struct ResourceWithLabel {
     pub spl_token_mint: [u8; 32],
 }
 
+/// The forwarder call an ephemeral resource of a logic triggers: the
+/// transfer logic's [`ForwarderInfo`], or the call of a logic that extends
+/// it. The call also fixes the domain the logic's owners sign under, so a
+/// signature for one logic does not authorize another.
+pub trait ForwarderCall: Clone + Serialize + for<'de> Deserialize<'de> {
+    /// The domain a consumed persistent resource's owner signs the action
+    /// tree root under.
+    const AUTH_SIGNATURE_DOMAIN: &'static [u8];
+
+    /// The external payload of this call, triggered by `resource` (consumed
+    /// when `is_consumed`) under its checked `label`.
+    fn external_payload(
+        &self,
+        resource: &Resource,
+        is_consumed: bool,
+        label: &LabelInfo,
+        action_root: &[u8; 32],
+    ) -> Result<Vec<ExpirableBlob>, ArmError>;
+}
+
 /// The TokenTransferWitness holds all the information necessary to generate a
-/// proof of the resource logic of a given resource.
-#[derive(Clone, Default, Serialize, Deserialize)]
-pub struct TokenTransferWitness {
+/// proof of the resource logic of a given resource; `C` is the call an
+/// ephemeral resource triggers, which selects the logic.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TokenTransferWitness<C = ForwarderInfo> {
     pub resource: Resource,
     pub is_consumed: bool,
     pub action_tree_root: Digest,
@@ -136,9 +157,27 @@ pub struct TokenTransferWitness {
     /// A consumed persistent resource requires the owner's signature.
     pub auth_sig: Option<AuthoritySignature>,
     pub encryption_info: Option<EncryptionInfo>,
-    pub forwarder_info: Option<ForwarderInfo>,
+    pub forwarder_info: Option<C>,
     pub label_info: Option<LabelInfo>,
     pub value_info: Option<ValueInfo>,
+}
+
+// Not derived: the derive would require `C: Default`, which a call has no
+// meaningful value for.
+impl<C> Default for TokenTransferWitness<C> {
+    fn default() -> Self {
+        Self {
+            resource: Resource::default(),
+            is_consumed: false,
+            action_tree_root: Digest::default(),
+            nf_key: None,
+            auth_sig: None,
+            encryption_info: None,
+            forwarder_info: None,
+            label_info: None,
+            value_info: None,
+        }
+    }
 }
 
 /// The forwarder call an ephemeral resource triggers. The op codes, the
@@ -162,7 +201,94 @@ pub struct ForwarderInfo {
     pub wrap_auth_info: Option<WrapAuthInfo>,
 }
 
-impl TokenTransferWitness {
+impl ForwarderCall for ForwarderInfo {
+    const AUTH_SIGNATURE_DOMAIN: &'static [u8] = AUTH_SIGNATURE_DOMAIN;
+
+    fn external_payload(
+        &self,
+        resource: &Resource,
+        is_consumed: bool,
+        label: &LabelInfo,
+        action_root: &[u8; 32],
+    ) -> Result<Vec<ExpirableBlob>, ArmError> {
+        let (inputs, num_accounts) = match self.call_type {
+            CallType::Wrap => {
+                if !is_consumed {
+                    return Err(ArmError::ProveFailed(
+                        "Token wraps must be triggered by a consumed resource".to_string(),
+                    ));
+                }
+
+                let wrap_auth = self
+                    .wrap_auth_info
+                    .as_ref()
+                    .ok_or(ArmError::MissingField("Wrap auth info"))?;
+
+                let amount = spl_amount_from_quantity(resource.quantity)?;
+
+                let inputs = encode_wrap_forwarder_input(&WrapInput {
+                    token_mint: label.spl_token_mint,
+                    amount,
+                    user: self.solana_account,
+                    nonce: wrap_auth.nonce,
+                    deadline: wrap_auth.deadline,
+                    action_tree_root: *action_root,
+                    signature: wrap_auth.signature,
+                    ed25519_ix_index: wrap_auth.ed25519_ix_index,
+                });
+                (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
+            }
+            CallType::Unwrap => {
+                if is_consumed {
+                    return Err(ArmError::ProveFailed(
+                        "Token unwraps must be triggered by a created resource".to_string(),
+                    ));
+                }
+
+                // Check resource value_ref commits to the recipient Solana account.
+                let value_ref = calculate_value_ref_from_solana_account(&self.solana_account);
+                if resource.value_ref != value_ref {
+                    return Err(ArmError::ProveFailed(
+                        "Invalid resource value_ref".to_string(),
+                    ));
+                }
+
+                let inputs = encode_unwrap_forwarder_input(
+                    &label.spl_token_mint,
+                    spl_amount_from_quantity(resource.quantity)?,
+                    &self.solana_account,
+                );
+                (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
+            }
+        };
+
+        Ok(external_call_payload(
+            label.forwarder_program_id,
+            inputs,
+            num_accounts,
+        ))
+    }
+}
+
+impl<C> TokenTransferWitness<C> {
+    /// The same witness, with its call taken into a logic that extends this
+    /// one (`D: From<C>`).
+    pub fn into_call<D: From<C>>(self) -> TokenTransferWitness<D> {
+        TokenTransferWitness {
+            resource: self.resource,
+            is_consumed: self.is_consumed,
+            action_tree_root: self.action_tree_root,
+            nf_key: self.nf_key,
+            auth_sig: self.auth_sig,
+            encryption_info: self.encryption_info,
+            forwarder_info: self.forwarder_info.map(D::from),
+            label_info: self.label_info,
+            value_info: self.value_info,
+        }
+    }
+}
+
+impl<C: ForwarderCall> TokenTransferWitness<C> {
     /// Compute the tag (nullifier for consumed, commitment for created).
     pub fn tag(&self) -> Result<Digest, ArmError> {
         if self.is_consumed {
@@ -189,6 +315,23 @@ impl TokenTransferWitness {
         Ok(value_info)
     }
 
+    /// The resource's label, checked against its label ref:
+    /// sha2(forwarder_program_id, spl_token_mint).
+    pub fn label(&self) -> Result<&LabelInfo, ArmError> {
+        let label_info = self
+            .label_info
+            .as_ref()
+            .ok_or(ArmError::MissingField("Label info"))?;
+        let label_ref =
+            calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
+        if self.resource.label_ref != label_ref {
+            return Err(ArmError::ProveFailed(
+                "Invalid resource label_ref".to_string(),
+            ));
+        }
+        Ok(label_info)
+    }
+
     /// Checks on ephemeral resources; returns the external_payload.
     pub fn ephemeral_resource_check(
         &self,
@@ -198,90 +341,16 @@ impl TokenTransferWitness {
             .forwarder_info
             .as_ref()
             .ok_or(ArmError::MissingField("Forwarder info"))?;
-
-        let label_info = self
-            .label_info
-            .as_ref()
-            .ok_or(ArmError::MissingField("Label info"))?;
-
-        // Check resource label: label = sha2(forwarder_program_id, spl_token_mint)
-        let label_ref =
-            calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
-        if self.resource.label_ref != label_ref {
-            return Err(ArmError::ProveFailed(
-                "Invalid resource label_ref".to_string(),
-            ));
-        }
-
-        let (inputs, num_accounts) = match forwarder_info.call_type {
-            CallType::Wrap => {
-                if !self.is_consumed {
-                    return Err(ArmError::ProveFailed(
-                        "Token wraps must be triggered by a consumed resource".to_string(),
-                    ));
-                }
-
-                let wrap_auth = forwarder_info
-                    .wrap_auth_info
-                    .as_ref()
-                    .ok_or(ArmError::MissingField("Wrap auth info"))?;
-
-                let amount = spl_amount_from_quantity(self.resource.quantity)?;
-
-                let inputs = encode_wrap_forwarder_input(&WrapInput {
-                    token_mint: label_info.spl_token_mint,
-                    amount,
-                    user: forwarder_info.solana_account,
-                    nonce: wrap_auth.nonce,
-                    deadline: wrap_auth.deadline,
-                    action_tree_root: *action_root,
-                    signature: wrap_auth.signature,
-                    ed25519_ix_index: wrap_auth.ed25519_ix_index,
-                });
-                (inputs, FORWARDER_WRAP_NUM_ACCOUNTS)
-            }
-            CallType::Unwrap => {
-                if self.is_consumed {
-                    return Err(ArmError::ProveFailed(
-                        "Token unwraps must be triggered by a created resource".to_string(),
-                    ));
-                }
-
-                // Check resource value_ref commits to the recipient Solana account.
-                let value_ref =
-                    calculate_value_ref_from_solana_account(&forwarder_info.solana_account);
-                if self.resource.value_ref != value_ref {
-                    return Err(ArmError::ProveFailed(
-                        "Invalid resource value_ref".to_string(),
-                    ));
-                }
-
-                let inputs = encode_unwrap_forwarder_input(
-                    &label_info.spl_token_mint,
-                    spl_amount_from_quantity(self.resource.quantity)?,
-                    &forwarder_info.solana_account,
-                );
-                (inputs, FORWARDER_UNWRAP_NUM_ACCOUNTS)
-            }
-        };
-
-        let call_data = SolanaExternalCall {
-            program_id: label_info.forwarder_program_id,
-            instruction_data: inputs,
-            // The forwarder returns the empty output, as the EVM ERC20
-            // forwarder does, whose resource expects it the same way.
-            expected_output: Vec::new(),
-            output_mode: OutputMode::ReturnData,
-            num_accounts,
-        };
-        let call_data_expirable_blob = ExpirableBlob {
-            blob: bytes_to_words(&call_data.encode()),
-            deletion_criterion: DeletionCriterion::Immediately as u32,
-        };
-        Ok(vec![call_data_expirable_blob])
+        forwarder_info.external_payload(
+            &self.resource,
+            self.is_consumed,
+            self.label()?,
+            action_root,
+        )
     }
 
-    /// Check persistent resource consumption.
+    /// Check persistent resource consumption: the owner signed the action
+    /// tree root under the logic's domain.
     pub fn persistent_resource_consumption(&self, action_root: &[u8; 32]) -> Result<(), ArmError> {
         spl_amount_from_quantity(self.resource.quantity)?;
 
@@ -294,7 +363,7 @@ impl TokenTransferWitness {
 
         if value_info
             .auth_pk
-            .verify(AUTH_SIGNATURE_DOMAIN, action_root, auth_sig)
+            .verify(C::AUTH_SIGNATURE_DOMAIN, action_root, auth_sig)
             .is_err()
         {
             return Err(ArmError::InvalidSignature);
@@ -310,19 +379,7 @@ impl TokenTransferWitness {
     ) -> Result<(Vec<ExpirableBlob>, Vec<ExpirableBlob>), ArmError> {
         spl_amount_from_quantity(self.resource.quantity)?;
 
-        let label_info = self
-            .label_info
-            .as_ref()
-            .ok_or(ArmError::MissingField("Label info"))?;
-        let label_ref =
-            calculate_label_ref(&label_info.forwarder_program_id, &label_info.spl_token_mint);
-
-        if self.resource.label_ref != label_ref {
-            return Err(ArmError::ProveFailed(
-                "Invalid resource label_ref".to_string(),
-            ));
-        }
-
+        let label_info = self.label()?;
         let value_info = self.value()?;
 
         // Generate resource ciphertext.
@@ -364,7 +421,7 @@ impl TokenTransferWitness {
     }
 }
 
-impl LogicCircuit for TokenTransferWitness {
+impl<C: ForwarderCall> LogicCircuit for TokenTransferWitness<C> {
     fn constrain(&self) -> Result<LogicInstance, ArmError> {
         let tag = self.tag()?;
         let root_bytes: [u8; 32] = self.action_tree_root.into();
@@ -395,6 +452,28 @@ impl LogicCircuit for TokenTransferWitness {
             app_data,
         })
     }
+}
+
+/// The external payload of a call of the forwarder `program_id` with
+/// `instruction_data` over a segment of `num_accounts` accounts.
+pub fn external_call_payload(
+    program_id: [u8; 32],
+    instruction_data: Vec<u8>,
+    num_accounts: u8,
+) -> Vec<ExpirableBlob> {
+    let call_data = SolanaExternalCall {
+        program_id,
+        instruction_data,
+        // The forwarder returns the empty output, as the EVM ERC20
+        // forwarder does, whose resource expects it the same way.
+        expected_output: Vec::new(),
+        output_mode: OutputMode::ReturnData,
+        num_accounts,
+    };
+    vec![ExpirableBlob {
+        blob: bytes_to_words(&call_data.encode()),
+        deletion_criterion: DeletionCriterion::Immediately as u32,
+    }]
 }
 
 /// Calculate the value ref based on an authorization key and an encryption key for a given user.

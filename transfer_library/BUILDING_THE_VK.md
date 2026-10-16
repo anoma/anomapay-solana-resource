@@ -1,6 +1,13 @@
-# Building the transfer-circuit VK (`TOKEN_TRANSFER_ID`)
+# Building the circuit VKs
 
-`TOKEN_TRANSFER_ID` is the RISC0 image ID of the token-transfer guest. It is a
+This repository has two circuits, each a guest whose RISC0 image ID is a VK:
+
+| Circuit | Guest | Library | VK |
+|---|---|---|---|
+| `transfer_circuit` | `token-transfer-guest` | `transfer_library` | `TOKEN_TRANSFER_ID` |
+| `emergency_migrating_transfer_circuit` | `emergency-migrating-token-transfer-guest` | `emergency_migrating_transfer_library` | `EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID` |
+
+Everything below holds for both. A VK is a
 hash over the **entire compiled guest ELF**, so it is sensitive to far more than
 the circuit logic: the crate names and versions, the source ids of every git
 dependency, the guest toolchain, and the **full transitive dependency graph
@@ -9,22 +16,23 @@ party can reproduce is to make every one of those inputs deterministic.
 
 ## Canonical build
 
-Build the guest with the RISC0 Docker reproducible builder, from the repository
+Build each guest with the RISC0 Docker reproducible builder, from the repository
 root:
 
 ```bash
 cargo risczero build --manifest-path transfer_circuit/Cargo.toml
+cargo risczero build --manifest-path emergency_migrating_transfer_circuit/Cargo.toml
 ```
 
 This compiles the guest inside the pinned `risczero/risc0-guest-builder` image,
 which fixes the toolchain and normalizes all source paths. The image ID it
-prints is the VK; the ELF it writes is what `transfer_library` embeds. The
+prints is the VK; the ELF it writes is what its library embeds. The
 `cargo-risczero` that runs the build must be able to build edition-2024 crates
 (3.0.5 is known to; the builder image is `r0.1.88.0`).
 
-CI rebuilds the guest the same way and fails if the ELF differs from the
-embedded one, and a unit test checks that `TOKEN_TRANSFER_ID` is the image ID
-of the embedded ELF, so the checked-in key is always reproducible from the
+CI rebuilds each guest the same way and fails if the ELF differs from the
+embedded one, and a unit test in each library checks that its VK is the image
+ID of the embedded ELF, so the checked-in keys are always reproducible from the
 checked-in source.
 
 ## Required invariants
@@ -41,9 +49,9 @@ checked-in source.
    cannot share types with a crate that pins it the other way; the SPL token
    forwarder's integration tests depend on `transfer_library` and on the
    adapter's harness, so the two must agree. The
-   guest depends on `transfer_witness` by path, and cargo resolves that crate's
-   `{ workspace = true }` dependencies against the repository root, so the root
-   pin governs the guest too. Never regenerate a lockfile blindly (invariant
+   guests depend on their witness crates by path, and cargo resolves those
+   crates' `{ workspace = true }` dependencies against the repository root, so
+   the root pin governs the guests too. Never regenerate a lockfile blindly (invariant
    3): the committed locks fix every version the guest builds with.
 
 2. **Any change of a git dependency's source id rotates the VK.** Cargo derives
@@ -53,17 +61,19 @@ checked-in source.
    therefore the ELF, even when their source is byte-identical. Plan every
    re-pin as a rotation with its own `VK_HISTORY.md` row.
 
-3. **Commit BOTH lockfiles (root and guest) with the git sources the manifest
-   names and transitive versions that compile under the guest toolchain.** The
-   Solana crates are pinned by their release tags (`bindings/v*`). After
-   changing a tag, re-lock that source in each lock without bumping the rest
-   (`cargo fetch` resolves only what the manifest changed):
+3. **Commit every lockfile (the root's and each guest's) with the git sources
+   the manifest names and transitive versions that compile under the guest
+   toolchain.** The Solana crates are pinned by a release tag
+   (`bindings/v*`) when one has what the circuits need, and by commit
+   otherwise. After changing a pin, re-lock that source in each lock without
+   bumping the rest (`cargo fetch` resolves only what the manifest changed):
 
    ```bash
    # root / host lock
    cargo fetch
-   # guest lock
-   cd transfer_circuit && cargo fetch
+   # guest locks
+   (cd transfer_circuit && cargo fetch)
+   (cd emergency_migrating_transfer_circuit && cargo fetch)
    ```
 
    The forwarder client depends on `anoma-pa-solana-client` itself; pin the
@@ -83,5 +93,5 @@ checked-in source.
 - Build twice: identical image ID.
 - Build from a checkout at a different absolute path: identical image ID.
 
-Only then set `TOKEN_TRANSFER_ID` in `src/lib.rs`, copy the ELF to
-`elf/token-transfer-guest.bin`, and add the row to `VK_HISTORY.md`.
+Only then set the VK in the library's `src/lib.rs`, copy the ELF to the
+library's `elf/<guest>.bin`, and add the row to the library's `VK_HISTORY.md`.

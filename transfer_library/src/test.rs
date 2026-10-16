@@ -5,7 +5,6 @@
 // set it when running these locally.
 use anoma_rm_risc0::{
     Digest,
-    delta_proof::DeltaWitness,
     kind_table::KindTable,
     logic_instance::LogicInstance,
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
@@ -13,7 +12,7 @@ use anoma_rm_risc0::{
     nullifier_key::NullifierKey,
     proving_system::{JournalEncoding, ProofType},
     resource::Resource,
-    transaction::{Delta, Transaction},
+    transaction::Transaction,
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
@@ -29,7 +28,7 @@ use transfer_witness::{
     calculate_value_ref_from_solana_account,
 };
 
-use crate::action::{ComplianceParams, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap};
+use crate::action::{ComplianceParams, Owner, Wrap, WrapAuth, unwrap, wrap};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 
 const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
@@ -227,19 +226,6 @@ fn compliance_params() -> ComplianceParams<'static> {
     }
 }
 
-/// Proves the action in-process and wraps it in a balanced transaction.
-fn prove(action: &TransferAction) -> Transaction {
-    let compliance_unit =
-        anoma_rm_risc0::compliance_unit::create(&action.compliance_witness, ProofType::Succinct)
-            .unwrap();
-    let consumed = action.consumed_logic.prove(ProofType::Succinct).unwrap();
-    let created = action.created_logic.prove(ProofType::Succinct).unwrap();
-    let action = anoma_rm_risc0::action::new(compliance_unit, vec![consumed, created]).unwrap();
-    let delta_witness = DeltaWitness::from_bytes(&compliance_params().rcv).unwrap();
-    let tx = Transaction::create(vec![action], Delta::Witness(delta_witness));
-    anoma_rm_risc0::transaction::generate_delta_proof(tx).unwrap()
-}
-
 fn tags_of(tx: &Transaction) -> Vec<Digest> {
     tx.actions.as_ref().unwrap()[0]
         .logic_verifier_inputs
@@ -260,7 +246,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
     };
     let kind_table_root = EMPTY_KIND_TABLE.root();
 
-    let wrap = wrap(
+    let wrap = wrap::<TransferLogic>(
         label(),
         QUANTITY as u64,
         [5u8; 32],
@@ -268,8 +254,8 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         [6u8; 32],
     )
     .unwrap();
-    assert_eq!(wrap.created.value_ref, owner.value_ref());
-    assert_eq!(wrap.created.quantity, QUANTITY);
+    assert_eq!(wrap.deposit.created.value_ref, owner.value_ref());
+    assert_eq!(wrap.deposit.created.quantity, QUANTITY);
     let auth = WrapAuth {
         user: SOLANA_ACCOUNT,
         info: wrap_auth(),
@@ -282,22 +268,27 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         44
     );
     let (_, discovery_pk) = random_keypair();
-    let wrap_tx = prove(
-        &wrap
-            .action(auth, &discovery_pk, compliance_params(), &mut OsRng)
-            .unwrap(),
-    );
+    let wrap_tx = wrap
+        .action(auth, &discovery_pk, compliance_params(), &mut OsRng)
+        .unwrap()
+        .prove(ProofType::Succinct)
+        .unwrap();
     anoma_rm_risc0::transaction::verify(&wrap_tx, kind_table_root, JournalEncoding::Risc0Serde)
         .unwrap();
     assert_eq!(
         tags_of(&wrap_tx),
         vec![
-            wrap.consumed.nullifier(&NullifierKey::default()).unwrap(),
-            wrap.created.commitment()
+            wrap.deposit
+                .consumed
+                .nullifier(&NullifierKey::default())
+                .unwrap(),
+            wrap.deposit.created.commitment()
         ]
     );
 
-    let unwrap = unwrap(label(), wrap.created, owner.clone(), SOLANA_ACCOUNT).unwrap();
+    let unwrap =
+        unwrap::<TransferLogic>(label(), wrap.deposit.created, owner.clone(), SOLANA_ACCOUNT)
+            .unwrap();
     assert_eq!(unwrap.created.quantity, QUANTITY);
     assert_eq!(
         unwrap.created.value_ref,
@@ -307,17 +298,17 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         AUTH_SIGNATURE_DOMAIN,
         unwrap.action_tree_root().unwrap().as_bytes(),
     );
-    let unwrap_tx = prove(
-        &unwrap
-            .action(auth_sig, MerklePath::empty(), compliance_params())
-            .unwrap(),
-    );
+    let unwrap_tx = unwrap
+        .action(auth_sig, MerklePath::empty(), compliance_params())
+        .unwrap()
+        .prove(ProofType::Succinct)
+        .unwrap();
     anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_table_root, JournalEncoding::Risc0Serde)
         .unwrap();
     assert_eq!(
         tags_of(&unwrap_tx),
         vec![
-            wrap.created.nullifier(&owner.nf_key).unwrap(),
+            wrap.deposit.created.nullifier(&owner.nf_key).unwrap(),
             unwrap.created.commitment()
         ]
     );
@@ -338,7 +329,7 @@ fn test_wrap() -> Wrap {
 #[test]
 fn wrap_signed_message_rejects_quantity_above_u64() {
     let mut wrap = test_wrap();
-    wrap.consumed.quantity = u64::MAX as u128 + 1;
+    wrap.deposit.consumed.quantity = u64::MAX as u128 + 1;
     let err = wrap
         .signed_message(WRAP_NONCE, WRAP_DEADLINE)
         .expect_err("a quantity above u64::MAX must not be signed as an SPL amount");

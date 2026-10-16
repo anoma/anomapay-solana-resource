@@ -1,9 +1,4 @@
-include = [
-    "Cargo.toml",
-    "transfer_witness/Cargo.toml",
-    "transfer_library/Cargo.toml",
-    "transfer_circuit/Cargo.toml"
-]
+include = ["Cargo.toml", "*/Cargo.toml"]
 
 [formatting]
 reorder_keys = true

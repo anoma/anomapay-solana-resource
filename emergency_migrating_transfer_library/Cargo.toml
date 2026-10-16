@@ -1,0 +1,24 @@
+[package]
+authors.workspace = true
+description = "Host-side proving API for the AnomaPay Solana token-transfer resource's emergency-migrating logic: the migration builder and the embedded guest ELF/ImageID."
+edition.workspace = true
+license.workspace = true
+name = "emergency_migrating_transfer_library"
+readme = "README.md"
+version.workspace = true
+
+[dependencies]
+anoma-rm-risc0 = { workspace = true, features = ["transaction", "prove"] }
+anoma-rm-risc0-gadgets = { workspace = true }
+emergency_migrating_transfer_witness = { workspace = true }
+hex-literal = { workspace = true }
+k256 = { workspace = true, features = ["arithmetic"] }
+serde = { workspace = true, features = ["derive"] }
+transfer_library = { workspace = true }
+transfer_witness = { workspace = true }
+
+[dev-dependencies]
+anoma-pa-solana-client = { workspace = true }
+anomapay-spl-token-forwarder-client = { workspace = true }
+rand_core = { version = "0.6", features = ["getrandom"] }
+risc0-zkvm = "3.0.3"
