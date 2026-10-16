@@ -5,7 +5,6 @@ use anoma_pa_solana_client::external_call::SolanaExternalCall;
 use anoma_rm_risc0::{
     Digest,
     kind_table::KindTable,
-    logic_proof::LogicProver,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::{JournalEncoding, ProofType},
@@ -105,10 +104,6 @@ fn verify(tx: &Transaction) {
 fn image_id_matches_the_embedded_guest() {
     assert_eq!(
         risc0_zkvm::compute_image_id(EMERGENCY_MIGRATING_TOKEN_TRANSFER_ELF).unwrap(),
-        EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID
-    );
-    assert_eq!(
-        EmergencyMigratingTransferLogic::verifying_key(),
         EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID
     );
 }

@@ -163,16 +163,13 @@ impl MigrateInfo {
                 "Wrong total migrate resource quantity".to_string(),
             ));
         }
-        if batch_auth_pk
+        batch_auth_pk
             .verify(
                 EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
                 action_root,
                 &self.auth_sig,
             )
-            .is_err()
-        {
-            return Err(ArmError::InvalidSignature);
-        }
+            .map_err(|_| ArmError::InvalidSignature)?;
 
         let num_accounts = forwarder_migrate_num_accounts(entries.len()).ok_or_else(|| {
             ArmError::ProveFailed(format!(
