@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "anoma-pa-solana-client"
 version = "0.7.0"
-source = "git+https://github.com/anoma/anoma-pa-solana-client?tag=bindings%2Fv0.7.0#dacef67977ca71a9b6bfb7d37b46db85abc38561"
+source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=a028b7960372a838dda90dc6e54e44a94dc1ab54#a028b7960372a838dda90dc6e54e44a94dc1ab54"
 dependencies = [
  "bincode",
  "serde",
@@ -251,7 +251,7 @@ dependencies = [
 [[package]]
 name = "anomapay-spl-token-forwarder-client"
 version = "0.4.0"
-source = "git+https://github.com/anoma/anomapay-spl-token-forwarder?rev=ea2f185afa60ddb55383170a9000f772819f1453#ea2f185afa60ddb55383170a9000f772819f1453"
+source = "git+https://github.com/anoma/anomapay-spl-token-forwarder?rev=54122150955fbb0a537079265c5cd3ff080343af#54122150955fbb0a537079265c5cd3ff080343af"
 dependencies = [
  "anoma-pa-solana-client",
  "base64",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "emergency_migrating_transfer_witness"
-version = "2.0.0-rc.7"
+version = "2.0.0-rc.8"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
@@ -3004,7 +3004,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0-rc.7"
+version = "2.0.0-rc.8"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
