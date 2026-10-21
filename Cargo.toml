@@ -22,7 +22,7 @@ version = "2.0.0-rc.8"
 # adapter's external call; the forwarder's op codes, input encoders, segment
 # sizes and wrap message), and dropping the default `solana`
 # feature keeps the Solana SDK out of the RISC Zero guest, which can't
-# cross-compile it. anoma-pa-solana-client's commit is the one the forwarder
+# cross-compile it. anoma-pa-solana-client's source is the one the forwarder
 # client pins, so one source of it reaches the guest.
 anoma-pa-solana-client = { git = "https://github.com/anoma/anoma-pa-solana-client", rev = "a028b7960372a838dda90dc6e54e44a94dc1ab54", default-features = false }
 anoma-rm-risc0 = { version = "2.0.0-rc.7", default-features = false }
