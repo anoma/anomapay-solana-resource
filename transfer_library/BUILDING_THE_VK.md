@@ -77,7 +77,7 @@ checked-in source.
    ```
 
    The forwarder client depends on `anoma-pa-solana-client` itself; pin the
-   adapter client at the tag the forwarder client pins, or the guest links two
+   adapter client at the source (tag or commit) the forwarder client pins, or the guest links two
    copies of it.
 
    Do **not** run a blind `cargo update`. The host cargo resolves transitive
