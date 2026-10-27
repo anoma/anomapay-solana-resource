@@ -39,8 +39,9 @@ checks that:
 - the entries' quantities sum to the trigger's, within an SPL amount;
 - `auth_sig` is the owner's signature over the action tree root.
 
-It commits the forwarder's migrate call (`encode_migrate_forwarder_input`
-from `anomapay-spl-token-forwarder-client`): the mint, the total, and per
+It commits the forwarder's migrate call (`wire::encode_migrate_forwarder_input`,
+which `emergency_migrating_transfer_library`'s tests check against
+`anomapay-spl-token-forwarder-client`'s): the mint, the total, and per
 entry its nullifier, the commitment-tree root its `path` gives, its logic ref
 and its forwarder, over a segment of `forwarder_migrate_num_accounts(n)`
 accounts. The emergency-migrating forwarder checks each root and logic ref and

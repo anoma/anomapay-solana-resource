@@ -53,8 +53,10 @@ on the resource:
 
 ## `call_type`
 
-`CallType { Wrap, Unwrap }`. The op codes, the instruction-data encoders and
-the account count of each call's CPI segment are owned by the forwarder's own
-client, `anomapay-spl-token-forwarder-client`, so the circuit and the on-chain
-forwarder agree byte for byte. The `SolanaExternalCall` the call is encoded
-into is the adapter's, from `anoma-pa-solana-client`.
+`CallType { Wrap, Unwrap }`. The op codes, the instruction-data encoders, the
+account count of each call's CPI segment and the adapter's
+`SolanaExternalCall` the call is encoded into are declared in `wire`, not taken
+from the forwarder's and the adapter's clients, so no client release changes
+the VK; `transfer_library`'s tests check them against
+`anomapay-spl-token-forwarder-client` and `anoma-pa-solana-client` byte for
+byte.

@@ -185,16 +185,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anoma-pa-solana-client"
-version = "0.7.0"
-source = "git+https://github.com/anoma/anoma-pa-solana-client?rev=7ed4f3ee29ec4f8840fd20599e28f2e50a79fb37#7ed4f3ee29ec4f8840fd20599e28f2e50a79fb37"
-dependencies = [
- "bincode",
- "serde",
- "sha2",
-]
-
-[[package]]
 name = "anoma-rm-core"
 version = "2.0.0-rc.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -246,16 +236,6 @@ dependencies = [
  "rand 0.8.6",
  "serde",
  "zeroize",
-]
-
-[[package]]
-name = "anomapay-spl-token-forwarder-client"
-version = "0.4.0"
-source = "git+https://github.com/anoma/anomapay-spl-token-forwarder?rev=e122e5106298bad753af89286705424b851fbba2#e122e5106298bad753af89286705424b851fbba2"
-dependencies = [
- "anoma-pa-solana-client",
- "base64",
- "sha2",
 ]
 
 [[package]]
@@ -1251,11 +1231,10 @@ dependencies = [
 
 [[package]]
 name = "emergency_migrating_transfer_witness"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 dependencies = [
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
- "anomapay-spl-token-forwarder-client",
  "serde",
  "transfer_witness",
 ]
@@ -3004,12 +2983,10 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 dependencies = [
- "anoma-pa-solana-client",
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
- "anomapay-spl-token-forwarder-client",
  "bincode",
  "k256",
  "serde",

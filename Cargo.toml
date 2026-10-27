@@ -14,16 +14,14 @@ edition = "2024"
 license = "GPL-3.0"
 readme = "README.md"
 repository = "https://github.com/anoma/anomapay-solana-resource"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 
 [workspace.dependencies]
-# anoma-pa-solana-client and anomapay-spl-token-forwarder-client (below) take
-# `default-features = false`: only their dep-free wire formats are used (the
-# adapter's external call; the forwarder's op codes, input encoders, segment
-# sizes and wrap message), and dropping the default `solana`
-# feature keeps the Solana SDK out of the RISC Zero guest, which can't
-# cross-compile it. anoma-pa-solana-client's source is the one the forwarder
-# client pins, so one source of it reaches the guest.
+# The guests link neither client: they declare the wire formats they commit
+# (`*_witness/src/wire.rs`), so no client release changes a VK. The host takes
+# them for the wrap message and for the tests that check those formats against
+# them, without the default `solana` feature, which only the Solana SDK
+# integration needs.
 anoma-pa-solana-client = { git = "https://github.com/anoma/anoma-pa-solana-client", rev = "7ed4f3ee29ec4f8840fd20599e28f2e50a79fb37", default-features = false }
 anoma-rm-risc0 = { version = "2.0.0-rc.7", default-features = false }
 anoma-rm-risc0-gadgets = "2.0.0-rc.7"
