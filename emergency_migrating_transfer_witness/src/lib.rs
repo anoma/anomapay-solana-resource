@@ -6,20 +6,22 @@
 //! resource's commitment-tree root, nullifier, logic and forwarder) and
 //! commits the emergency-migrating forwarder's migrate call, which records the
 //! nullifiers and moves no tokens.
+pub mod wire;
+
 pub use anoma_rm_risc0::resource_logic::LogicCircuit;
 use anoma_rm_risc0::{
     error::ArmError, logic_instance::ExpirableBlob, merkle_path::MerklePath,
     nullifier_key::NullifierKey, resource::Resource,
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
-use anomapay_spl_token_forwarder_client::{
-    MigrateEntry as ForwarderMigrateEntry, MigrateInput, encode_migrate_forwarder_input,
-    forwarder_migrate_num_accounts,
-};
 use serde::{Deserialize, Serialize};
 use transfer_witness::{
     ForwarderCall, ForwarderInfo, LabelInfo, TokenTransferWitness, ValueInfo, calculate_label_ref,
     calculate_persistent_value_ref, external_call_payload, spl_amount_from_quantity,
+};
+use wire::{
+    MigrateEntry as ForwarderMigrateEntry, MigrateInput, encode_migrate_forwarder_input,
+    forwarder_migrate_num_accounts,
 };
 
 /// The domain owners sign under, the EVM emergency-migrating resource's: a
@@ -193,8 +195,7 @@ impl MigrateInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anoma_pa_solana_client::external_call::SolanaExternalCall;
-    use anoma_rm_risc0::{Digest, utils::words_to_bytes};
+    use anoma_rm_risc0::Digest;
     use anoma_rm_risc0_gadgets::{
         authority::{AuthoritySigningKey, AuthorityVerifyingKey},
         encryption::random_keypair,
@@ -326,43 +327,6 @@ mod tests {
         assert_eq!(
             EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
             b"TokenTransferAuthorizationEmergencyMigrating"
-        );
-    }
-
-    /// The trigger commits the forwarder's migrate input for exactly the
-    /// batch's nullifiers, roots, logic refs and forwarders, and the
-    /// migration segment's account count.
-    #[test]
-    fn migration_commits_the_forwarder_migrate_call() {
-        let mut witness = migration();
-        let instance = witness.constrain().expect("the migration proves");
-        assert_eq!(instance.app_data.external_payload.len(), 1);
-        let call =
-            SolanaExternalCall::decode(words_to_bytes(&instance.app_data.external_payload[0].blob))
-                .expect("the external-call blob decodes");
-        let expected_entries = migrate_info(&mut witness)
-            .entries
-            .iter()
-            .map(|entry| ForwarderMigrateEntry {
-                nullifier: entry.resource.nullifier(&entry.nf_key).unwrap().into(),
-                commitment_tree_root: entry.path.root(&entry.resource.commitment()).into(),
-                vulnerable_logic_ref: VULNERABLE_LOGIC_REF,
-                forwarder: entry.forwarder_program_id,
-            })
-            .collect();
-        assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
-        assert_eq!(
-            call.num_accounts,
-            forwarder_migrate_num_accounts(2).unwrap()
-        );
-        assert!(call.expected_output.is_empty());
-        assert_eq!(
-            call.instruction_data,
-            encode_migrate_forwarder_input(&MigrateInput {
-                token_mint: SPL_TOKEN_MINT,
-                quantity: 100,
-                entries: expected_entries,
-            })
         );
     }
 

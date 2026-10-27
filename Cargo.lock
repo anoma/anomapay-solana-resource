@@ -1540,7 +1540,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "emergency_migrating_transfer_library"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
@@ -1558,12 +1558,10 @@ dependencies = [
 
 [[package]]
 name = "emergency_migrating_transfer_witness"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 dependencies = [
- "anoma-pa-solana-client",
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
- "anomapay-spl-token-forwarder-client",
  "serde",
  "transfer_witness",
 ]
@@ -4907,8 +4905,9 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 dependencies = [
+ "anoma-pa-solana-client",
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
  "anomapay-spl-token-forwarder-client",
@@ -4924,12 +4923,10 @@ dependencies = [
 
 [[package]]
 name = "transfer_witness"
-version = "2.0.0-rc.9"
+version = "2.0.0-rc.10"
 dependencies = [
- "anoma-pa-solana-client",
  "anoma-rm-risc0",
  "anoma-rm-risc0-gadgets",
- "anomapay-spl-token-forwarder-client",
  "bincode",
  "k256",
  "serde",

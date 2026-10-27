@@ -1,7 +1,7 @@
 // Circuit tests for the emergency-migrating logic, against the committed
 // guest ELF (`EMERGENCY_MIGRATING_TOKEN_TRANSFER_ELF`). Proving is slow
 // without `RISC0_DEV_MODE=1`; set it when running these locally.
-use anoma_pa_solana_client::external_call::SolanaExternalCall;
+use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
     Digest,
     kind_table::KindTable,
@@ -17,10 +17,11 @@ use anoma_rm_risc0_gadgets::{
     encryption::random_keypair,
 };
 use anomapay_spl_token_forwarder_client::{
-    MigrateEntry as ForwarderMigrateEntry, MigrateInput, encode_migrate_forwarder_input,
+    MigrateEntry as ForwarderMigrateEntry, MigrateInput, OP_MIGRATE,
+    encode_migrate_forwarder_input, forwarder_migrate_num_accounts,
 };
 use emergency_migrating_transfer_witness::{
-    EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN, MigrateEntry,
+    EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN, MigrateEntry, wire,
 };
 use k256::Scalar;
 use rand_core::OsRng;
@@ -108,6 +109,84 @@ fn image_id_matches_the_embedded_guest() {
     );
 }
 
+/// The guest declares the forwarder's migrate format itself
+/// (`emergency_migrating_transfer_witness::wire`), so no client release
+/// reaches its VK; it is the forwarder client's byte for byte, and so is the
+/// migration segment's account count for every batch size the client
+/// accepts and the first it refuses.
+#[test]
+fn the_guests_wire_formats_are_the_clients() {
+    for count in [0u8, 1, 3] {
+        let entries: Vec<_> = (0..count)
+            .map(|i| {
+                (
+                    [0x10 + i; 32],
+                    [0x20 + i; 32],
+                    [0x30 + i; 32],
+                    [0x40 + i; 32],
+                )
+            })
+            .collect();
+        let guest = wire::encode_migrate_forwarder_input(&wire::MigrateInput {
+            token_mint: SPL_TOKEN_MINT,
+            quantity: 0x0102_0304_0506_0708,
+            entries: entries
+                .iter()
+                .map(
+                    |&(nullifier, commitment_tree_root, vulnerable_logic_ref, forwarder)| {
+                        wire::MigrateEntry {
+                            nullifier,
+                            commitment_tree_root,
+                            vulnerable_logic_ref,
+                            forwarder,
+                        }
+                    },
+                )
+                .collect(),
+        });
+        let client = encode_migrate_forwarder_input(&MigrateInput {
+            token_mint: SPL_TOKEN_MINT,
+            quantity: 0x0102_0304_0506_0708,
+            entries: entries
+                .iter()
+                .map(
+                    |&(nullifier, commitment_tree_root, vulnerable_logic_ref, forwarder)| {
+                        ForwarderMigrateEntry {
+                            nullifier,
+                            commitment_tree_root,
+                            vulnerable_logic_ref,
+                            forwarder,
+                        }
+                    },
+                )
+                .collect(),
+        });
+        println!("migrate input of {count} entries: guest {guest:02x?}, client {client:02x?}");
+        assert_eq!(guest, client, "the migrate input of {count} entries");
+    }
+    assert_eq!(wire::OP_MIGRATE, OP_MIGRATE, "OP_MIGRATE");
+
+    let mut entries = 0;
+    loop {
+        let guest = wire::forwarder_migrate_num_accounts(entries);
+        let client = forwarder_migrate_num_accounts(entries);
+        assert_eq!(
+            guest, client,
+            "the segment of a migration of {entries} entries"
+        );
+        if client.is_none() {
+            println!("the client refuses a migration of {entries} entries, and so does the guest");
+            break;
+        }
+        entries += 1;
+    }
+    assert_eq!(
+        wire::forwarder_migrate_num_accounts(usize::MAX),
+        forwarder_migrate_num_accounts(usize::MAX),
+        "the segment of a migration of usize::MAX entries"
+    );
+}
+
 /// A migration of two transfer-logic resources, one under the legacy
 /// forwarder and one under this one, proves against the embedded guest,
 /// balances, and commits the forwarder's migrate call over both; the
@@ -167,6 +246,12 @@ fn migration_proves_balances_and_its_resource_unwraps() {
         SolanaExternalCall::decode(words_to_bytes(&trigger.app_data.external_payload[0].blob))
             .unwrap();
     assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+    assert_eq!(
+        call.num_accounts,
+        forwarder_migrate_num_accounts(2).unwrap()
+    );
+    assert!(call.expected_output.is_empty());
+    assert_eq!(call.output_mode, OutputMode::ReturnData);
     assert_eq!(
         call.instruction_data,
         encode_migrate_forwarder_input(&MigrateInput {

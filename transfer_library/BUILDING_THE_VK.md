@@ -64,7 +64,7 @@ checked-in source.
 3. **Commit every lockfile (the root's and each guest's) with the git sources
    the manifest names and transitive versions that compile under the guest
    toolchain.** The Solana crates are pinned by a release tag
-   (`bindings/v*`) when one has what the circuits need, and by commit
+   (`bindings/v*`) when one has what the host needs, and by commit
    otherwise. After changing a pin, re-lock that source in each lock without
    bumping the rest (`cargo fetch` resolves only what the manifest changed):
 
@@ -76,9 +76,11 @@ checked-in source.
    (cd emergency_migrating_transfer_circuit && cargo fetch)
    ```
 
-   The forwarder client depends on `anoma-pa-solana-client` itself; pin the
-   adapter client at the source (tag or commit) the forwarder client pins, or the guest links two
-   copies of it.
+   The guests link no Solana client: each witness crate declares the wire
+   formats its circuit commits (`src/wire.rs`), and the libraries' tests
+   check them against the adapter's and the forwarder's clients, which only
+   the host takes. A client re-pin therefore never changes a VK. CI fails if
+   a client appears in a guest lockfile.
 
    Do **not** run a blind `cargo update`. The host cargo resolves transitive
    dependencies to versions the pinned guest toolchain may not build. The

@@ -3,6 +3,7 @@
 // These exercise the committed guest ELF (embedded as `TOKEN_TRANSFER_ELF`)
 // through `TransferLogic::prove`. Proving is slow without `RISC0_DEV_MODE=1`;
 // set it when running these locally.
+use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
     Digest,
     kind_table::KindTable,
@@ -13,11 +14,13 @@ use anoma_rm_risc0::{
     proving_system::{JournalEncoding, ProofType},
     resource::Resource,
     transaction::Transaction,
+    utils::words_to_bytes,
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
     encryption::{Ciphertext, SecretKey, generate_public_key, random_keypair},
 };
+use anomapay_spl_token_forwarder_client as forwarder_client;
 use k256::{AffinePoint, Scalar};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRngCore, OsRng, SeedableRng};
@@ -25,7 +28,7 @@ use std::sync::LazyLock;
 use transfer_witness::{
     AUTH_SIGNATURE_DOMAIN, LabelInfo, LogicCircuit, ResourceWithLabel, TokenTransferWitness,
     ValueInfo, WrapAuthInfo, calculate_label_ref, calculate_persistent_value_ref,
-    calculate_value_ref_from_solana_account,
+    calculate_value_ref_from_solana_account, wire,
 };
 
 use crate::action::{ComplianceParams, Owner, Wrap, WrapAuth, unwrap, wrap};
@@ -124,6 +127,190 @@ fn image_id_matches_the_embedded_guest() {
     assert_eq!(
         risc0_zkvm::compute_image_id(TOKEN_TRANSFER_ELF).unwrap(),
         TOKEN_TRANSFER_ID
+    );
+}
+
+/// The guest declares the adapter's external call and the forwarder's wrap
+/// and unwrap formats itself (`transfer_witness::wire`), so no client
+/// release reaches its VK; each is the clients' byte for byte.
+#[test]
+fn the_guests_wire_formats_are_the_clients() {
+    let token_mint = [0x21; 32];
+    let user = [0x31; 32];
+    let action_tree_root = [0x41; 32];
+    let signature: [u8; 64] = core::array::from_fn(|i| i as u8);
+    let guest_wrap = wire::encode_wrap_forwarder_input(&wire::WrapInput {
+        token_mint,
+        amount: 0x0102_0304_0506_0708,
+        user,
+        nonce: 0x1112_1314_1516_1718,
+        deadline: -5,
+        action_tree_root,
+        signature,
+        ed25519_ix_index: 3,
+    });
+    let client_wrap = forwarder_client::encode_wrap_forwarder_input(&forwarder_client::WrapInput {
+        token_mint,
+        amount: 0x0102_0304_0506_0708,
+        user,
+        nonce: 0x1112_1314_1516_1718,
+        deadline: -5,
+        action_tree_root,
+        signature,
+        ed25519_ix_index: 3,
+    });
+    println!("wrap input: guest {guest_wrap:02x?}, client {client_wrap:02x?}");
+    assert_eq!(guest_wrap, client_wrap, "the wrap input");
+
+    let guest_unwrap = wire::encode_unwrap_forwarder_input(&token_mint, 0x0a0b_0c0d, &user);
+    let client_unwrap =
+        forwarder_client::encode_unwrap_forwarder_input(&token_mint, 0x0a0b_0c0d, &user);
+    println!("unwrap input: guest {guest_unwrap:02x?}, client {client_unwrap:02x?}");
+    assert_eq!(guest_unwrap, client_unwrap, "the unwrap input");
+
+    assert_eq!(wire::OP_WRAP, forwarder_client::OP_WRAP, "OP_WRAP");
+    assert_eq!(wire::OP_UNWRAP, forwarder_client::OP_UNWRAP, "OP_UNWRAP");
+    assert_eq!(
+        wire::FORWARDER_SEGMENT_HEAD_NUM_ACCOUNTS,
+        forwarder_client::FORWARDER_SEGMENT_HEAD_NUM_ACCOUNTS,
+        "the segment head's account count"
+    );
+    assert_eq!(
+        wire::FORWARDER_WRAP_NUM_ACCOUNTS,
+        forwarder_client::FORWARDER_WRAP_NUM_ACCOUNTS,
+        "the wrap segment's account count"
+    );
+    assert_eq!(
+        wire::FORWARDER_UNWRAP_NUM_ACCOUNTS,
+        forwarder_client::FORWARDER_UNWRAP_NUM_ACCOUNTS,
+        "the unwrap segment's account count"
+    );
+
+    let guest_call = wire::SolanaExternalCall {
+        program_id: FORWARDER_PROGRAM_ID,
+        instruction_data: guest_wrap.clone(),
+        expected_output: vec![7, 8, 9],
+        output_mode: wire::OutputMode::ReturnData,
+        num_accounts: 10,
+    }
+    .encode();
+    let client_call = SolanaExternalCall {
+        program_id: FORWARDER_PROGRAM_ID,
+        instruction_data: guest_wrap,
+        expected_output: vec![7, 8, 9],
+        output_mode: OutputMode::ReturnData,
+        num_accounts: 10,
+    }
+    .encode();
+    println!("external call: guest {guest_call:02x?}, client {client_call:02x?}");
+    assert_eq!(guest_call, client_call, "the external call");
+}
+
+/// A wrap's ephemeral resource of `quantity`.
+fn wrap_witness(quantity: u128) -> TokenTransferWitness {
+    TransferLogic::mint_resource_logic_with_wrap_auth(
+        Resource {
+            quantity,
+            ..create_ephemeral_resource()
+        },
+        Digest::from_bytes(ACTION_TREE_ROOT),
+        NullifierKey::from_bytes(NF_KEY_BYTES),
+        label(),
+        SOLANA_ACCOUNT,
+        wrap_auth(),
+    )
+    .witness
+}
+
+/// An unwrap's ephemeral resource of `quantity` to `SOLANA_ACCOUNT`.
+fn unwrap_witness(quantity: u128) -> TokenTransferWitness {
+    TransferLogic::burn_resource_logic(
+        Resource {
+            quantity,
+            ..create_ephemeral_resource()
+        },
+        Digest::from_bytes(ACTION_TREE_ROOT),
+        label(),
+        SOLANA_ACCOUNT,
+    )
+    .witness
+}
+
+/// The external call `witness` commits, decoded by the adapter's client.
+fn witness_external_call(witness: TokenTransferWitness) -> SolanaExternalCall {
+    let external_payload = witness
+        .ephemeral_resource_check(&ACTION_TREE_ROOT)
+        .expect("configured ephemeral witness should emit an external call");
+    assert_eq!(external_payload.len(), 1);
+    SolanaExternalCall::decode(words_to_bytes(&external_payload[0].blob))
+        .expect("external-call blob should decode")
+}
+
+#[test]
+fn wrap_external_call_rejects_quantity_above_u64() {
+    let err = wrap_witness(u64::MAX as u128 + 1)
+        .ephemeral_resource_check(&ACTION_TREE_ROOT)
+        .expect_err("wrap witness must reject oversized SPL amount");
+    assert!(
+        err.to_string().contains("exceeds u64::MAX"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn unwrap_external_call_rejects_quantity_above_u64() {
+    let err = unwrap_witness(u64::MAX as u128 + 1)
+        .ephemeral_resource_check(&ACTION_TREE_ROOT)
+        .expect_err("unwrap witness must reject oversized SPL amount");
+    assert!(
+        err.to_string().contains("exceeds u64::MAX"),
+        "unexpected error: {err}"
+    );
+}
+
+/// The wrap call commits the forwarder's segment and exactly the forwarder
+/// client's bytes for every witness value, the action tree root included.
+#[test]
+fn wrap_external_call_commits_the_forwarder_segment() {
+    let call = witness_external_call(wrap_witness(u64::MAX as u128));
+    let auth = wrap_auth();
+    assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+    assert_eq!(
+        call.num_accounts,
+        forwarder_client::FORWARDER_WRAP_NUM_ACCOUNTS
+    );
+    assert!(call.expected_output.is_empty());
+    assert_eq!(call.output_mode, OutputMode::ReturnData);
+    assert_eq!(call.instruction_data[0], forwarder_client::OP_WRAP);
+    assert_eq!(
+        call.instruction_data,
+        forwarder_client::encode_wrap_forwarder_input(&forwarder_client::WrapInput {
+            token_mint: SPL_TOKEN_MINT,
+            amount: u64::MAX,
+            user: SOLANA_ACCOUNT,
+            nonce: auth.nonce,
+            deadline: auth.deadline,
+            action_tree_root: ACTION_TREE_ROOT,
+            signature: auth.signature,
+            ed25519_ix_index: auth.ed25519_ix_index,
+        })
+    );
+}
+
+#[test]
+fn unwrap_external_call_commits_the_forwarder_segment() {
+    let call = witness_external_call(unwrap_witness(u64::MAX as u128));
+    assert_eq!(call.program_id, FORWARDER_PROGRAM_ID);
+    assert_eq!(
+        call.num_accounts,
+        forwarder_client::FORWARDER_UNWRAP_NUM_ACCOUNTS
+    );
+    assert!(call.expected_output.is_empty());
+    assert_eq!(call.output_mode, OutputMode::ReturnData);
+    assert_eq!(call.instruction_data[0], forwarder_client::OP_UNWRAP);
+    assert_eq!(
+        call.instruction_data,
+        forwarder_client::encode_unwrap_forwarder_input(&SPL_TOKEN_MINT, u64::MAX, &SOLANA_ACCOUNT)
     );
 }
 
