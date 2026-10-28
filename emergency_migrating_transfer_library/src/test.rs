@@ -4,7 +4,7 @@
 use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
     Digest,
-    kind_table::KindTable,
+    kind_tree::KindTree,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::{JournalEncoding, ProofType},
@@ -44,7 +44,7 @@ const LEGACY_FORWARDER_PROGRAM_ID: [u8; 32] = [11u8; 32];
 const SPL_TOKEN_MINT: [u8; 32] = [1u8; 32];
 const RECIPIENT: [u8; 32] = [2u8; 32];
 
-static EMPTY_KIND_TABLE: LazyLock<KindTable> = LazyLock::new(KindTable::empty);
+static EMPTY_KIND_TREE: LazyLock<KindTree> = LazyLock::new(KindTree::empty);
 
 fn label() -> LabelInfo {
     LabelInfo {
@@ -56,7 +56,7 @@ fn label() -> LabelInfo {
 fn compliance_params() -> ComplianceParams<'static> {
     ComplianceParams {
         rcv: Scalar::ONE.to_bytes().to_vec(),
-        kind_table: &EMPTY_KIND_TABLE,
+        kind_tree: &EMPTY_KIND_TREE,
     }
 }
 
@@ -98,7 +98,7 @@ fn transfer_logic_resource(
 }
 
 fn verify(tx: &Transaction) {
-    anoma_rm_risc0::transaction::verify(tx, EMPTY_KIND_TABLE.root(), JournalEncoding::Risc0Serde)
+    anoma_rm_risc0::transaction::verify(tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
         .unwrap();
 }
 

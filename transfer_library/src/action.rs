@@ -15,12 +15,12 @@ use anoma_rm_risc0::{
     compliance_unit,
     delta_proof::DeltaWitness,
     error::ArmError,
-    kind_table::KindTable,
+    kind_tree::KindTree,
     logic_proof::LogicProver,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::ProofType,
-    resource::{ConsumedResourceWitness, Resource},
+    resource::{Resource, ResourceWitness, ResourceWitnessConsumed},
     transaction::{self, Delta, Transaction},
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
@@ -50,11 +50,11 @@ impl Owner {
 }
 
 /// The compliance facts the deployment fixes: the commitment randomness of
-/// the action's compliance unit and the kind table the adapter pins, which
-/// gives each resource it lists its kind point.
+/// the action's compliance unit and the kind tree the adapter pins, which
+/// gives each resource it lists its kind base.
 pub struct ComplianceParams<'a> {
     pub rcv: Vec<u8>,
-    pub kind_table: &'a KindTable,
+    pub kind_tree: &'a KindTree,
 }
 
 /// The user's ed25519 authorization of a wrap, as the forwarder checks it:
@@ -90,17 +90,14 @@ impl<L: LogicProver> TransferAction<L> {
     }
 }
 
-/// The compliance witness of an action consuming `consumed` and creating
-/// `created`, with each resource's path in the deployment's kind table.
+/// The compliance witness of an action over `resources`, in their order,
+/// with each resource's path in the deployment's kind tree.
 fn compliance_witness(
-    consumed: ConsumedResourceWitness,
-    created: Resource,
+    resources: Vec<ResourceWitness>,
     compliance: ComplianceParams<'_>,
 ) -> ComplianceWitness {
-    let consumed = vec![consumed];
-    let created = vec![created];
-    let kind_paths = compliance.kind_table.kind_paths_for(&consumed, &created);
-    ComplianceWitness::from_parts(consumed, created, INITIAL_ROOT, &compliance.rcv, kind_paths)
+    let kind_paths = compliance.kind_tree.kind_paths_for(&resources);
+    ComplianceWitness::from_parts(resources, INITIAL_ROOT, &compliance.rcv, kind_paths)
 }
 
 /// An ephemeral resource of the logic `logic_ref` under `label_ref`,
@@ -124,8 +121,8 @@ fn ephemeral_resource(
     }
 }
 
-/// The action tree root of a one-consumed, one-created action: nullifier
-/// then commitment, the order the aggregation guest enforces.
+/// The action tree root of a one-consumed, one-created action: its
+/// resources' tags in the action's order, nullifier then commitment.
 fn action_tree_root(consumed_nf: Digest, created: &Resource) -> Result<Digest, ArmError> {
     ActionTree::new(vec![consumed_nf, created.commitment()]).root()
 }
@@ -207,8 +204,13 @@ impl<L: LogicProver + From<TransferLogic>> Deposit<L> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
             compliance_witness: compliance_witness(
-                ConsumedResourceWitness::from_resource(self.consumed, NullifierKey::default()),
-                self.created,
+                vec![
+                    ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource(
+                        self.consumed,
+                        NullifierKey::default(),
+                    )),
+                    ResourceWitness::Created(self.created),
+                ],
                 compliance,
             ),
             consumed_logic: consumed_logic(root),
@@ -355,12 +357,14 @@ impl<L: LogicProver + From<TransferLogic>> Unwrap<L> {
         let root = self.action_tree_root()?;
         Ok(TransferAction {
             compliance_witness: compliance_witness(
-                ConsumedResourceWitness::from_resource_with_path(
-                    self.consumed,
-                    self.owner.nf_key.clone(),
-                    cm_merkle_path,
-                ),
-                self.created,
+                vec![
+                    ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource_with_path(
+                        self.consumed,
+                        self.owner.nf_key.clone(),
+                        cm_merkle_path,
+                    )),
+                    ResourceWitness::Created(self.created),
+                ],
                 compliance,
             ),
             consumed_logic: TransferLogic::consume_persistent_resource_logic(

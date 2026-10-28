@@ -6,7 +6,7 @@
 use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
     Digest,
-    kind_table::KindTable,
+    kind_tree::KindTree,
     logic_instance::LogicInstance,
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
     merkle_path::MerklePath,
@@ -404,15 +404,15 @@ fn test_transfer() {
     assert_eq!(plaintext.as_bytes(), bincode::serialize(&expected).unwrap());
 }
 
-/// The empty kind table, which the adapter accepts whatever table it stores.
-static EMPTY_KIND_TABLE: LazyLock<KindTable> = LazyLock::new(KindTable::empty);
+/// The empty kind tree, which the adapter accepts whatever tree it stores.
+static EMPTY_KIND_TREE: LazyLock<KindTree> = LazyLock::new(KindTree::empty);
 
 /// The deployment facts of the action tests: a fixed commitment randomness
-/// and the empty kind table.
+/// and the empty kind tree.
 fn compliance_params() -> ComplianceParams<'static> {
     ComplianceParams {
         rcv: Scalar::ONE.to_bytes().to_vec(),
-        kind_table: &EMPTY_KIND_TABLE,
+        kind_tree: &EMPTY_KIND_TREE,
     }
 }
 
@@ -434,7 +434,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         value: owner_value(),
         nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
     };
-    let kind_table_root = EMPTY_KIND_TABLE.root();
+    let kind_tree_root = EMPTY_KIND_TREE.root();
 
     let wrap = wrap::<TransferLogic>(
         label(),
@@ -463,7 +463,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         .unwrap()
         .prove(ProofType::Succinct)
         .unwrap();
-    anoma_rm_risc0::transaction::verify(&wrap_tx, kind_table_root, JournalEncoding::Risc0Serde)
+    anoma_rm_risc0::transaction::verify(&wrap_tx, kind_tree_root, JournalEncoding::Risc0Serde)
         .unwrap();
     assert_eq!(
         tags_of(&wrap_tx),
@@ -493,7 +493,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         .unwrap()
         .prove(ProofType::Succinct)
         .unwrap();
-    anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_table_root, JournalEncoding::Risc0Serde)
+    anoma_rm_risc0::transaction::verify(&unwrap_tx, kind_tree_root, JournalEncoding::Risc0Serde)
         .unwrap();
     assert_eq!(
         tags_of(&unwrap_tx),
