@@ -21,6 +21,7 @@ use anoma_rm_risc0_gadgets::{
     encryption::{Ciphertext, SecretKey, generate_public_key, random_keypair},
 };
 use anomapay_spl_token_forwarder_client as forwarder_client;
+use anomapay_spl_token_forwarder_client::generated::spl_token_forwarder::constants::OP_UNWRAP;
 use k256::{AffinePoint, Scalar};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRngCore, OsRng, SeedableRng};
@@ -169,11 +170,7 @@ fn the_guests_wire_formats_are_the_clients() {
     assert_eq!(guest_unwrap, client_unwrap, "the unwrap input");
 
     assert_eq!(wire::OP_WRAP, forwarder_client::OP_WRAP, "OP_WRAP");
-    assert_eq!(
-        wire::OP_UNWRAP,
-        forwarder_client::generated::spl_token_forwarder::constants::OP_UNWRAP,
-        "OP_UNWRAP"
-    );
+    assert_eq!(wire::OP_UNWRAP, OP_UNWRAP, "OP_UNWRAP");
     assert_eq!(
         wire::FORWARDER_SEGMENT_HEAD_NUM_ACCOUNTS,
         forwarder_client::FORWARDER_SEGMENT_HEAD_NUM_ACCOUNTS,
@@ -311,10 +308,7 @@ fn unwrap_external_call_commits_the_forwarder_segment() {
     );
     assert!(call.expected_output.is_empty());
     assert_eq!(call.output_mode, OutputMode::ReturnData);
-    assert_eq!(
-        call.instruction_data[0],
-        forwarder_client::generated::spl_token_forwarder::constants::OP_UNWRAP
-    );
+    assert_eq!(call.instruction_data[0], OP_UNWRAP);
     assert_eq!(
         call.instruction_data,
         forwarder_client::encode_unwrap_forwarder_input(&SPL_TOKEN_MINT, u64::MAX, &SOLANA_ACCOUNT)
