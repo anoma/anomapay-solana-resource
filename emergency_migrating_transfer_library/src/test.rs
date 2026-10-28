@@ -17,8 +17,9 @@ use anoma_rm_risc0_gadgets::{
     encryption::random_keypair,
 };
 use anomapay_spl_token_forwarder_client::{
-    MigrateEntry as ForwarderMigrateEntry, MigrateInput, OP_MIGRATE,
-    encode_migrate_forwarder_input, forwarder_migrate_num_accounts,
+    MigrateEntry as ForwarderMigrateEntry, MigrateInput, encode_migrate_forwarder_input,
+    forwarder_migrate_num_accounts,
+    generated::emergency_migrating_spl_token_forwarder::constants::OP_MIGRATE,
 };
 use emergency_migrating_transfer_witness::{
     EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN, MigrateEntry, wire,
