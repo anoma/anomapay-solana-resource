@@ -38,7 +38,7 @@ checked-in source.
 ## Required invariants
 
 1. **Take arm-risc0 from the same source the Solana adapter does (today
-   crates.io, `2.0.0-rc.8.1`), and let the committed lockfiles fix the version.**
+   crates.io), and let the committed lockfiles fix the version.**
    The requirement is a caret one, as the ERC20 resource's: a consumer that
    links this crate with other circuit crates (the kind tables link every
    active circuit) resolves one arm-risc0 for all of them, and an exact
