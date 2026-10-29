@@ -65,7 +65,8 @@ mint via wrap, burn via unwrap) and implements ARM's `LogicProver`. The
 `action` module builds a whole wrap or unwrap from keys and amounts: the
 resources it consumes and creates, the message the user signs, and the
 compliance and logic witnesses of the action, proven in-process or by the
-caller's prover. Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
+caller's prover. `action::build` puts the resources of several flows into
+one action, in the caller's order. Embeds the guest ELF and the matching `TOKEN_TRANSFER_ID` image ID. See
 [`transfer_library/VK_HISTORY.md`](transfer_library/VK_HISTORY.md) for the
 verifying-key history and the migration record of every rotation.
 

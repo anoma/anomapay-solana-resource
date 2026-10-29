@@ -24,12 +24,22 @@ creates for the recipient. Each flow is of a logic `L`, `TransferLogic` or a
 logic that extends it (`wrap::<TransferLogic>(..)`): its resources carry
 `L`'s verifying key and its witnesses are `L`'s. A wrap's resources are a
 `Deposit`, the shape any call bringing a quantity into the shielded pool
-shares. `Wrap::signed_message` is the text the user's wallet signs, and
-`Wrap::action` / `Unwrap::action` produce a `TransferAction<L>`: the
-compliance witness and both logic witnesses, in tag order, which
+shares. `Wrap::signed_message` is the text the user's wallet signs for the
+tree root of the action the wrap is in, and `Wrap::action` / `Unwrap::action`
+produce a `TransferAction<L>` of that flow alone: the compliance witness and
+the logic witnesses, in the order of the resources, which
 `TransferAction::prove` proves in-process into a balanced transaction, or
 which a caller with its own prover (a proving queue, a mock prover) proves
 itself.
+
+`action::build` produces the `TransferAction<L>` of several flows in one
+action. `Wrap::parts`, `Unwrap::parts` and `Deposit::parts` give a flow's
+resources, each with its logic, a function of the action's tree root, so its
+owner or user signs the root of the whole action. `build` takes the parts in
+the caller's order, which is the order of the resources in the compliance
+instance and of the forwarder calls, and derives each created resource's
+nonce from its place among them; the single-flow `action` methods are calls
+of it.
 
 ## Guest artifacts
 

@@ -3,7 +3,8 @@
 //!
 //! Of particular interest are the `TransferLogic` struct and the
 //! `TokenTransferWitness` it wraps, and the [`action`] module that builds the
-//! wrap and unwrap actions from resources and keys.
+//! wrap and unwrap actions from resources and keys, alone or several in one
+//! action.
 
 pub mod action;
 #[cfg(test)]

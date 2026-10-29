@@ -6,6 +6,8 @@
 use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
     Digest,
+    action_tree::ActionTree,
+    compliance,
     kind_tree::KindTree,
     logic_instance::LogicInstance,
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
@@ -34,7 +36,7 @@ use transfer_witness::{
     calculate_value_ref_from_solana_account, wire,
 };
 
-use crate::action::{ComplianceParams, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap};
+use crate::action::{ComplianceParams, Owner, TransferAction, Wrap, WrapAuth, build, unwrap, wrap};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 use hex_literal::hex;
 
@@ -453,9 +455,13 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
     };
     // base64 of a 32-byte hash: what the wallet signs.
     assert_eq!(
-        wrap.signed_message(WRAP_NONCE, WRAP_DEADLINE)
-            .unwrap()
-            .len(),
+        wrap.signed_message(
+            WRAP_NONCE,
+            WRAP_DEADLINE,
+            wrap.deposit.action_tree_root().unwrap()
+        )
+        .unwrap()
+        .len(),
         44
     );
     let (_, discovery_pk) = random_keypair();
@@ -509,7 +515,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
 /// compliance witness, then each logic witness, in order.
 fn witnesses_digest(action: &TransferAction) -> Digest {
     let mut bytes = bincode::serialize(&action.compliance_witness).unwrap();
-    for logic in [&action.consumed_logic, &action.created_logic] {
+    for logic in &action.logic_witnesses {
         bytes.extend(bincode::serialize(logic).unwrap());
     }
     hash_bytes(&bytes)
@@ -575,6 +581,142 @@ fn single_flow_actions_are_pinned() {
     );
 }
 
+/// One action of an unwrap of the test wrap's resource to `SOLANA_ACCOUNT`
+/// and a wrap of the same quantity from it, its resources in the order
+/// `order` lists them by their index in [the unwrap's consumed, the unwrap's
+/// created, the wrap's consumed, the wrap's created]: the compliance instance
+/// and the logic witnesses keep that order, each created resource's nonce
+/// derives from its index among the created resources, the owner and the
+/// user sign the action's root, and the action proves and balances.
+fn assert_multi_flow_action_keeps_the_order(order: [usize; 4]) {
+    let (auth_sk, _, _, _) = owner_keys();
+    let owner = test_wrap().deposit.owner;
+    let wrapped = test_wrap().deposit.created;
+    let unwrap = unwrap::<TransferLogic>(label(), wrapped, owner.clone(), SOLANA_ACCOUNT).unwrap();
+    let wrap = wrap::<TransferLogic>(
+        label(),
+        QUANTITY as u64,
+        [11u8; 32],
+        owner.clone(),
+        [12u8; 32],
+    )
+    .unwrap();
+
+    let mut owner_signed = None;
+    let mut user_signed = None;
+    let (_, discovery_pk) = random_keypair();
+    let mut rng = OsRng;
+    let action = {
+        let unwrap_parts = unwrap.parts(
+            |root| {
+                owner_signed = Some(root);
+                auth_sk.sign(AUTH_SIGNATURE_DOMAIN, root.as_bytes())
+            },
+            MerklePath::empty(),
+        );
+        let wrap_parts = wrap.parts(
+            |root| {
+                user_signed = Some((root, wrap.signed_message(WRAP_NONCE, WRAP_DEADLINE, root)?));
+                Ok(WrapAuth {
+                    user: SOLANA_ACCOUNT,
+                    info: wrap_auth(),
+                })
+            },
+            &discovery_pk,
+            &mut rng,
+        );
+        let mut parts = [
+            Some(unwrap_parts.consumed),
+            Some(unwrap_parts.created),
+            Some(wrap_parts.consumed),
+            Some(wrap_parts.created),
+        ];
+        let listed = order.map(|index| parts[index].take().unwrap());
+        build(listed.into(), compliance_params()).unwrap()
+    };
+
+    let nullifiers = [
+        wrapped.nullifier(&owner.nf_key).unwrap(),
+        wrap.deposit
+            .consumed
+            .nullifier(&NullifierKey::default())
+            .unwrap(),
+    ];
+    let created = [unwrap.created, wrap.deposit.created]
+        .into_iter()
+        .enumerate()
+        .map(|(index, resource)| Resource {
+            nonce: Resource::derive_nonce_from_nullifiers(index as u32, &nullifiers).unwrap(),
+            ..resource
+        })
+        .collect::<Vec<_>>();
+    let tags = [
+        nullifiers[0],
+        created[0].commitment(),
+        nullifiers[1],
+        created[1].commitment(),
+    ];
+    let resources = [wrapped, created[0], wrap.deposit.consumed, created[1]];
+    let expected_tags = order.map(|index| tags[index]);
+    let instance = compliance::constrain(&action.compliance_witness).unwrap();
+    let instance_tags = instance.tags().collect::<Vec<_>>();
+    println!("order {order:?}: compliance instance tags {instance_tags:?}");
+    assert_eq!(
+        instance_tags, expected_tags,
+        "the compliance instance lists the resources in the caller's order"
+    );
+
+    let root = ActionTree::new(expected_tags.to_vec()).root().unwrap();
+    assert_eq!(
+        owner_signed,
+        Some(root),
+        "the owner signs the action's root"
+    );
+    let (user_root, message) = user_signed.unwrap();
+    assert_eq!(user_root, root, "the user signs the action's root");
+    assert_eq!(
+        message,
+        forwarder_client::WrapMessage {
+            forwarder_id: FORWARDER_PROGRAM_ID,
+            token_mint: SPL_TOKEN_MINT,
+            amount: QUANTITY as u64,
+            nonce: WRAP_NONCE,
+            deadline: WRAP_DEADLINE,
+            action_tree_root: root.into(),
+        }
+        .base64_digest(),
+        "the wrap message names the action's root"
+    );
+    for (position, (logic, index)) in action.logic_witnesses.iter().zip(order).enumerate() {
+        assert_eq!(
+            (logic.witness.resource, logic.witness.is_consumed),
+            (resources[index], index % 2 == 0),
+            "logic witness {position} is of the resource listed there"
+        );
+        assert_eq!(
+            logic.witness.action_tree_root, root,
+            "logic witness {position} is of the action's root"
+        );
+    }
+
+    let tx = action.prove(ProofType::Succinct).unwrap();
+    anoma_rm_risc0::transaction::verify(&tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
+        .unwrap();
+    assert_eq!(tags_of(&tx), expected_tags);
+}
+
+#[test]
+fn multi_flow_action_with_the_unwrap_first_keeps_its_order() {
+    assert_multi_flow_action_keeps_the_order([0, 1, 2, 3]);
+}
+
+/// The wrap's consumed resource sits between the unwrap's resources, so the
+/// order is the caller's, not one flow after another.
+#[test]
+fn multi_flow_action_with_interleaved_flows_keeps_its_order() {
+    assert_multi_flow_action_keeps_the_order([0, 2, 1, 3]);
+}
+
 /// A wrap of the test owner with fixed nonces: its action differs between
 /// calls only by the randomness the created resource's encryption draws.
 fn test_wrap() -> Wrap {
@@ -592,7 +734,11 @@ fn wrap_signed_message_rejects_quantity_above_u64() {
     let mut wrap = test_wrap();
     wrap.deposit.consumed.quantity = u64::MAX as u128 + 1;
     let err = wrap
-        .signed_message(WRAP_NONCE, WRAP_DEADLINE)
+        .signed_message(
+            WRAP_NONCE,
+            WRAP_DEADLINE,
+            Digest::from_bytes(ACTION_TREE_ROOT),
+        )
         .expect_err("a quantity above u64::MAX must not be signed as an SPL amount");
     assert!(
         err.to_string().contains("exceeds u64::MAX"),
@@ -611,7 +757,8 @@ fn created_witness(rng: &mut impl CryptoRngCore) -> TokenTransferWitness {
     test_wrap()
         .action(auth, &discovery_pk, compliance_params(), rng)
         .unwrap()
-        .created_logic
+        .logic_witnesses
+        .swap_remove(1)
         .witness
 }
 
