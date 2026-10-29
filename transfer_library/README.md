@@ -24,7 +24,8 @@ creates for the recipient. Each flow is of a logic `L`, `TransferLogic` or a
 logic that extends it (`wrap::<TransferLogic>(..)`): its resources carry
 `L`'s verifying key and its witnesses are `L`'s. A wrap's resources are a
 `Deposit`, the shape any call bringing a quantity into the shielded pool
-shares. A created resource's nonce is set when its action is laid out.
+shares. A flow's created resource exists only in its action's layout, which
+sets its nonce: read it from there.
 
 An action is built in two steps. `Layout::new` takes the resources of one or
 several flows (each flow's `resources()`, consumed then created) in the

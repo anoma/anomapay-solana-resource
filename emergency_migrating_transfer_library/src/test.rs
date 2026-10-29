@@ -280,7 +280,7 @@ fn migration_proves_balances_and_its_resource_unwraps() {
     )
     .unwrap();
     assert_eq!(
-        unwrap.created.logic_ref,
+        unwrap.layout().unwrap().resource(1).logic_ref,
         EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID
     );
     let auth_sig = auth_sk.sign(

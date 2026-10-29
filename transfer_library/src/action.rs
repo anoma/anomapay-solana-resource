@@ -221,12 +221,13 @@ fn ephemeral_resource(
 /// resource under `label` and creates `owner`'s shielded resource of its
 /// quantity: a wrap's, or a call of an extending logic that brings a
 /// quantity into the shielded pool (the emergency-migrating logic's
-/// migration). The created resource's nonce is its [`Layout`]'s.
+/// migration). Its created resource exists only in a [`Layout`].
 pub struct Deposit<L = TransferLogic> {
     pub label: LabelInfo,
     pub owner: Owner,
     pub consumed: Resource,
-    pub created: Resource,
+    /// The created resource's `rand_seed`.
+    rand_seed: [u8; 32],
     logic: PhantomData<L>,
 }
 
@@ -240,43 +241,44 @@ pub fn deposit<L: LogicProver>(
     owner: Owner,
     rand_seed: [u8; 32],
 ) -> Deposit<L> {
-    let logic_ref = L::verifying_key();
-    let label_ref = calculate_label_ref(&label.forwarder_program_id, &label.spl_token_mint);
     let consumed = ephemeral_resource(
-        logic_ref,
-        label_ref,
+        L::verifying_key(),
+        calculate_label_ref(&label.forwarder_program_id, &label.spl_token_mint),
         Digest::default(),
         quantity,
         ephemeral_nonce,
     );
-    let created = Resource {
-        logic_ref,
-        label_ref,
-        value_ref: owner.value_ref(),
-        quantity,
-        is_ephemeral: false,
-        nk_commitment: owner.nf_key.commit(),
-        rand_seed,
-        ..Default::default()
-    };
     Deposit {
         label,
         owner,
         consumed,
-        created,
+        rand_seed,
         logic: PhantomData,
     }
 }
 
 impl<L: LogicProver + From<TransferLogic>> Deposit<L> {
-    /// The deposit's resources for a [`Layout`], consumed then created.
+    /// The deposit's resources for a [`Layout`], consumed then created: the
+    /// created resource is the owner's shielded resource of the consumed
+    /// quantity, with nonce zero, which [`Layout::new`] overwrites with the
+    /// nonce of its place in the action. Read it from the layout.
     pub fn resources(&self) -> [ResourceWitness; 2] {
+        let consumed = self.consumed;
         [
             ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource(
-                self.consumed,
+                consumed,
                 NullifierKey::default(),
             )),
-            ResourceWitness::Created(self.created),
+            ResourceWitness::Created(Resource {
+                logic_ref: consumed.logic_ref,
+                label_ref: consumed.label_ref,
+                value_ref: self.owner.value_ref(),
+                quantity: consumed.quantity,
+                is_ephemeral: false,
+                nk_commitment: self.owner.nf_key.commit(),
+                rand_seed: self.rand_seed,
+                ..Default::default()
+            }),
         ]
     }
 
@@ -442,7 +444,7 @@ impl<L: LogicProver + From<TransferLogic>> Wrap<L> {
 
 /// An unwrap: the owner spends a shielded resource into an ephemeral one
 /// whose logic commits the forwarder call releasing the escrowed tokens to
-/// `recipient`. The created resource's nonce is its [`Layout`]'s.
+/// `recipient`. Its created resource exists only in a [`Layout`].
 pub struct Unwrap<L = TransferLogic> {
     pub label: LabelInfo,
     pub owner: Owner,
@@ -450,7 +452,6 @@ pub struct Unwrap<L = TransferLogic> {
     pub consumed: Resource,
     /// The consumed resource's path in the adapter's commitment tree.
     pub cm_merkle_path: MerklePath,
-    pub created: Resource,
     logic: PhantomData<L>,
 }
 
@@ -469,34 +470,36 @@ pub fn unwrap<L: LogicProver>(
             "The unwrapped resource is not of the unwrap's logic".to_string(),
         ));
     }
-    let created = ephemeral_resource(
-        wrapped.logic_ref,
-        wrapped.label_ref,
-        calculate_value_ref_from_solana_account(&recipient),
-        wrapped.quantity,
-        [0; 32],
-    );
     Ok(Unwrap {
         label,
         owner,
         recipient,
         consumed: wrapped,
         cm_merkle_path,
-        created,
         logic: PhantomData,
     })
 }
 
 impl<L: LogicProver + From<TransferLogic>> Unwrap<L> {
-    /// The unwrap's resources for a [`Layout`], consumed then created.
+    /// The unwrap's resources for a [`Layout`], consumed then created: the
+    /// created resource is the ephemeral resource of the consumed quantity
+    /// to `recipient`, with nonce zero, which [`Layout::new`] overwrites with
+    /// the nonce of its place in the action. Read it from the layout.
     pub fn resources(&self) -> [ResourceWitness; 2] {
+        let consumed = self.consumed;
         [
             ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource_with_path(
-                self.consumed,
+                consumed,
                 self.owner.nf_key.clone(),
                 self.cm_merkle_path.clone(),
             )),
-            ResourceWitness::Created(self.created),
+            ResourceWitness::Created(ephemeral_resource(
+                consumed.logic_ref,
+                consumed.label_ref,
+                calculate_value_ref_from_solana_account(&self.recipient),
+                consumed.quantity,
+                [0; 32],
+            )),
         ]
     }
 
