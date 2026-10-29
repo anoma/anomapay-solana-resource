@@ -2,9 +2,17 @@
 //! resources each flow consumes and creates, and the witnesses that prove it.
 //! Each flow is of a logic `L`, the transfer logic or a logic that extends
 //! it, whose verifying key its resources carry and whose prover proves them.
-//! The caller supplies the keys, the deployment's compliance facts and the
-//! prover; a [`TransferAction`] is unproven until [`TransferAction::prove`]
-//! or the caller's own prover turns its witnesses into proofs.
+//!
+//! An action is built in two steps. [`Layout::new`] takes the resources of
+//! one or several flows in the caller's order and fixes the action: the
+//! created resources' nonces, the tags and the action tree root, which the
+//! owners and users sign. [`Layout::action`] takes the logic witnesses each
+//! flow makes from its laid-out resources and those signatures, and returns
+//! the action's witnesses. A flow's `action` method does both for an action
+//! of that flow alone. The caller supplies the keys, the deployment's
+//! compliance facts and the prover; a [`TransferAction`] is unproven until
+//! [`TransferAction::prove`] or the caller's own prover turns its witnesses
+//! into proofs.
 
 use std::marker::PhantomData;
 
@@ -15,12 +23,12 @@ use anoma_rm_risc0::{
     compliance_unit,
     delta_proof::DeltaWitness,
     error::ArmError,
-    kind_table::KindTable,
+    kind_tree::KindTree,
     logic_proof::LogicProver,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::ProofType,
-    resource::{ConsumedResourceWitness, Resource},
+    resource::{Resource, ResourceWitness, ResourceWitnessConsumed},
     transaction::{self, Delta, Transaction},
 };
 use anoma_rm_risc0_gadgets::authority::AuthoritySignature;
@@ -50,11 +58,11 @@ impl Owner {
 }
 
 /// The compliance facts the deployment fixes: the commitment randomness of
-/// the action's compliance unit and the kind table the adapter pins, which
-/// gives each resource it lists its kind point.
+/// the action's compliance unit and the kind tree the adapter pins, which
+/// gives each resource it lists its kind base.
 pub struct ComplianceParams<'a> {
     pub rcv: Vec<u8>,
-    pub kind_table: &'a KindTable,
+    pub kind_tree: &'a KindTree,
 }
 
 /// The user's ed25519 authorization of a wrap, as the forwarder checks it:
@@ -65,13 +73,12 @@ pub struct WrapAuth {
     pub info: WrapAuthInfo,
 }
 
-/// One AnomaPay action, unproven: the compliance witness over its one
-/// consumed and one created resource, and each resource's logic witness,
-/// in tag order.
+/// One AnomaPay action, unproven: the compliance witness over its
+/// resources, and each resource's logic witness, in the order of the
+/// resources.
 pub struct TransferAction<L = TransferLogic> {
     pub compliance_witness: ComplianceWitness,
-    pub consumed_logic: L,
-    pub created_logic: L,
+    pub logic_witnesses: Vec<L>,
 }
 
 impl<L: LogicProver> TransferAction<L> {
@@ -79,9 +86,12 @@ impl<L: LogicProver> TransferAction<L> {
     /// balanced transaction.
     pub fn prove(&self, proof_type: ProofType) -> Result<Transaction, ArmError> {
         let compliance_unit = compliance_unit::create(&self.compliance_witness, proof_type)?;
-        let consumed = self.consumed_logic.prove(proof_type)?;
-        let created = self.created_logic.prove(proof_type)?;
-        let action = action::new(compliance_unit, vec![consumed, created])?;
+        let logic_proofs = self
+            .logic_witnesses
+            .iter()
+            .map(|logic| logic.prove(proof_type))
+            .collect::<Result<_, _>>()?;
+        let action = action::new(compliance_unit, logic_proofs)?;
         let delta_witness = DeltaWitness::from_bytes(&self.compliance_witness.rcv)?;
         transaction::generate_delta_proof(Transaction::create(
             vec![action],
@@ -90,17 +100,100 @@ impl<L: LogicProver> TransferAction<L> {
     }
 }
 
-/// The compliance witness of an action consuming `consumed` and creating
-/// `created`, with each resource's path in the deployment's kind table.
-fn compliance_witness(
-    consumed: ConsumedResourceWitness,
-    created: Resource,
-    compliance: ComplianceParams<'_>,
-) -> ComplianceWitness {
-    let consumed = vec![consumed];
-    let created = vec![created];
-    let kind_paths = compliance.kind_table.kind_paths_for(&consumed, &created);
-    ComplianceWitness::from_parts(consumed, created, INITIAL_ROOT, &compliance.rcv, kind_paths)
+/// An action's resources as the action holds them, in the caller's order,
+/// which is the order of the resources in the compliance instance and the
+/// action tree, and the order the adapter runs their forwarder calls in;
+/// their tags; and the action tree root, which the action's owners and users
+/// sign.
+#[derive(Clone)]
+pub struct Layout {
+    resources: Vec<ResourceWitness>,
+    tags: Vec<Digest>,
+    root: Digest,
+}
+
+impl Layout {
+    /// The layout of an action of `resources`, in their order. Each created
+    /// resource's nonce is set to the one derived from its index among the
+    /// created resources and from the nullifiers of the consumed ones, both
+    /// in this order, as the compliance circuit requires.
+    pub fn new(mut resources: Vec<ResourceWitness>) -> Result<Self, ArmError> {
+        let nullifiers = resources
+            .iter()
+            .filter_map(|resource| match resource {
+                ResourceWitness::Consumed(consumed) => {
+                    Some(consumed.resource.nullifier(&consumed.nf_key))
+                }
+                ResourceWitness::Created(_) => None,
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let nullifiers_digest = Resource::hash_nullifiers(&nullifiers)?;
+        let mut consumed_tags = nullifiers.into_iter();
+        let mut created_index = 0;
+        let tags = resources
+            .iter_mut()
+            .map(|resource| match resource {
+                ResourceWitness::Consumed(_) => consumed_tags
+                    .next()
+                    .expect("one nullifier per consumed resource"),
+                ResourceWitness::Created(created) => {
+                    created.nonce = Resource::derive_nonce(created_index, nullifiers_digest);
+                    created_index += 1;
+                    created.commitment()
+                }
+            })
+            .collect::<Vec<_>>();
+        let root = ActionTree::new(tags.clone()).root()?;
+        Ok(Layout {
+            resources,
+            tags,
+            root,
+        })
+    }
+
+    /// The resources, the created ones with their nonces.
+    pub fn resources(&self) -> &[ResourceWitness] {
+        &self.resources
+    }
+
+    /// The resource at `position`.
+    pub fn resource(&self, position: usize) -> Resource {
+        *self.resources[position].resource()
+    }
+
+    pub fn tags(&self) -> &[Digest] {
+        &self.tags
+    }
+
+    pub fn root(&self) -> Digest {
+        self.root
+    }
+
+    /// The action's witnesses: one compliance witness over the laid-out
+    /// resources and `logic_witnesses`, one per resource in the layout's
+    /// order, each of the resource at its position and of the layout's root.
+    pub fn action<L>(
+        self,
+        logic_witnesses: Vec<L>,
+        compliance: ComplianceParams<'_>,
+    ) -> Result<TransferAction<L>, ArmError> {
+        if logic_witnesses.len() != self.resources.len() {
+            return Err(ArmError::LogicVerifierInputCountMismatch {
+                expected: self.resources.len(),
+                found: logic_witnesses.len(),
+            });
+        }
+        let kind_paths = compliance.kind_tree.kind_paths_for(&self.resources);
+        Ok(TransferAction {
+            compliance_witness: ComplianceWitness::from_parts(
+                self.resources,
+                INITIAL_ROOT,
+                &compliance.rcv,
+                kind_paths,
+            ),
+            logic_witnesses,
+        })
+    }
 }
 
 /// An ephemeral resource of the logic `logic_ref` under `label_ref`,
@@ -124,96 +217,94 @@ fn ephemeral_resource(
     }
 }
 
-/// The action tree root of a one-consumed, one-created action: nullifier
-/// then commitment, the order the aggregation guest enforces.
-fn action_tree_root(consumed_nf: Digest, created: &Resource) -> Result<Digest, ArmError> {
-    ActionTree::new(vec![consumed_nf, created.commitment()]).root()
-}
-
 /// The resources of an action of the logic `L` that consumes an ephemeral
 /// resource under `label` and creates `owner`'s shielded resource of its
 /// quantity: a wrap's, or a call of an extending logic that brings a
 /// quantity into the shielded pool (the emergency-migrating logic's
-/// migration).
+/// migration). Its created resource exists only in a [`Layout`].
 pub struct Deposit<L = TransferLogic> {
     pub label: LabelInfo,
     pub owner: Owner,
     pub consumed: Resource,
-    pub created: Resource,
+    /// The created resource's `rand_seed`.
+    rand_seed: [u8; 32],
     logic: PhantomData<L>,
 }
 
 /// The resources of a deposit of `quantity` under `label` for `owner`.
-/// `ephemeral_nonce` is the consumed resource's nonce, which its nullifier
-/// and therefore the created resource's nonce derive from; `rand_seed` is
-/// the created resource's.
+/// `ephemeral_nonce` is the consumed resource's nonce; `rand_seed` is the
+/// created resource's.
 pub fn deposit<L: LogicProver>(
     label: LabelInfo,
     quantity: u128,
     ephemeral_nonce: [u8; 32],
     owner: Owner,
     rand_seed: [u8; 32],
-) -> Result<Deposit<L>, ArmError> {
-    let logic_ref = L::verifying_key();
-    let label_ref = calculate_label_ref(&label.forwarder_program_id, &label.spl_token_mint);
+) -> Deposit<L> {
     let consumed = ephemeral_resource(
-        logic_ref,
-        label_ref,
+        L::verifying_key(),
+        calculate_label_ref(&label.forwarder_program_id, &label.spl_token_mint),
         Digest::default(),
         quantity,
         ephemeral_nonce,
     );
-    let created = Resource {
-        logic_ref,
-        label_ref,
-        value_ref: owner.value_ref(),
-        quantity,
-        is_ephemeral: false,
-        nonce: Resource::derive_nonce_from_nullifiers(
-            0,
-            &[consumed.nullifier(&NullifierKey::default())?],
-        )?,
-        nk_commitment: owner.nf_key.commit(),
-        rand_seed,
-    };
-    Ok(Deposit {
+    Deposit {
         label,
         owner,
         consumed,
-        created,
+        rand_seed,
         logic: PhantomData,
-    })
+    }
 }
 
 impl<L: LogicProver + From<TransferLogic>> Deposit<L> {
-    pub fn action_tree_root(&self) -> Result<Digest, ArmError> {
-        action_tree_root(
-            self.consumed.nullifier(&NullifierKey::default())?,
-            &self.created,
-        )
+    /// The deposit's resources for a [`Layout`], consumed then created: the
+    /// created resource is the owner's shielded resource of the consumed
+    /// quantity, with nonce zero, which [`Layout::new`] overwrites with the
+    /// nonce of its place in the action. Read it from the layout.
+    pub fn resources(&self) -> [ResourceWitness; 2] {
+        let consumed = self.consumed;
+        [
+            ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource(
+                consumed,
+                NullifierKey::default(),
+            )),
+            ResourceWitness::Created(Resource {
+                logic_ref: consumed.logic_ref,
+                label_ref: consumed.label_ref,
+                value_ref: self.owner.value_ref(),
+                quantity: consumed.quantity,
+                is_ephemeral: false,
+                nk_commitment: self.owner.nf_key.commit(),
+                rand_seed: self.rand_seed,
+                ..Default::default()
+            }),
+        ]
     }
 
-    /// The action's witnesses: the consumed resource's logic is
-    /// `consumed_logic` of the action tree root; `discovery_pk` is the key
-    /// the created resource's discovery payload is encrypted to, and the
-    /// encryption keys and nonces of its payloads are drawn from `rng`.
-    pub fn action(
+    /// The layout of the action of the deposit alone.
+    pub fn layout(&self) -> Result<Layout, ArmError> {
+        Layout::new(self.resources().into())
+    }
+
+    /// The logic witnesses of the deposit's resources, consumed then
+    /// created, in an action of tree root `root` in which the created
+    /// resource is laid out as `created`. `consumed_logic` is the consumed
+    /// resource's; `discovery_pk` is the key the created resource's discovery
+    /// payload is encrypted to, and the encryption keys and nonces of its
+    /// payloads are drawn from `rng`.
+    pub fn logic_witnesses(
         &self,
-        consumed_logic: impl FnOnce(Digest) -> L,
+        consumed_logic: L,
+        created: Resource,
+        root: Digest,
         discovery_pk: &AffinePoint,
-        compliance: ComplianceParams<'_>,
         rng: &mut impl CryptoRngCore,
-    ) -> Result<TransferAction<L>, ArmError> {
-        let root = self.action_tree_root()?;
-        Ok(TransferAction {
-            compliance_witness: compliance_witness(
-                ConsumedResourceWitness::from_resource(self.consumed, NullifierKey::default()),
-                self.created,
-                compliance,
-            ),
-            consumed_logic: consumed_logic(root),
-            created_logic: TransferLogic::create_persistent_resource_logic(
-                self.created,
+    ) -> [L; 2] {
+        [
+            consumed_logic,
+            TransferLogic::create_persistent_resource_logic(
+                created,
                 root,
                 discovery_pk,
                 self.owner.value.clone(),
@@ -221,7 +312,29 @@ impl<L: LogicProver + From<TransferLogic>> Deposit<L> {
                 rng,
             )
             .into(),
-        })
+        ]
+    }
+
+    /// The witnesses of the action of the deposit alone: the consumed
+    /// resource's logic is `consumed_logic` of the action tree root, and
+    /// `discovery_pk` and `rng` are as [`Deposit::logic_witnesses`]'s.
+    pub fn action(
+        &self,
+        consumed_logic: impl FnOnce(Digest) -> L,
+        discovery_pk: &AffinePoint,
+        compliance: ComplianceParams<'_>,
+        rng: &mut impl CryptoRngCore,
+    ) -> Result<TransferAction<L>, ArmError> {
+        let layout = self.layout()?;
+        let root = layout.root();
+        let logic_witnesses = self.logic_witnesses(
+            consumed_logic(root),
+            layout.resource(1),
+            root,
+            discovery_pk,
+            rng,
+        );
+        layout.action(logic_witnesses.into(), compliance)
     }
 }
 
@@ -241,19 +354,25 @@ pub fn wrap<L: LogicProver>(
     ephemeral_nonce: [u8; 32],
     owner: Owner,
     rand_seed: [u8; 32],
-) -> Result<Wrap<L>, ArmError> {
-    Ok(Wrap {
-        deposit: deposit(label, amount as u128, ephemeral_nonce, owner, rand_seed)?,
-    })
+) -> Wrap<L> {
+    Wrap {
+        deposit: deposit(label, amount as u128, ephemeral_nonce, owner, rand_seed),
+    }
 }
 
 impl<L: LogicProver + From<TransferLogic>> Wrap<L> {
-    /// The text the user signs, for the forwarder nonce `nonce` and the
-    /// deadline `deadline`, and the ed25519 instruction carries: base64 of
+    /// The text the user signs, for the forwarder nonce `nonce`, the
+    /// deadline `deadline` and the tree root `action_tree_root` of the
+    /// action the wrap is in, and the ed25519 instruction carries: base64 of
     /// the sha256 of the 120-byte wrap message the forwarder recomputes from
     /// the proof-bound input. The signature goes into the [`WrapAuth`] the
-    /// action is built with.
-    pub fn signed_message(&self, nonce: u64, deadline: i64) -> Result<String, ArmError> {
+    /// wrap's logic witnesses are made with.
+    pub fn signed_message(
+        &self,
+        nonce: u64,
+        deadline: i64,
+        action_tree_root: Digest,
+    ) -> Result<String, ArmError> {
         let deposit = &self.deposit;
         Ok(WrapMessage {
             forwarder_id: deposit.label.forwarder_program_id,
@@ -261,13 +380,37 @@ impl<L: LogicProver + From<TransferLogic>> Wrap<L> {
             amount: spl_amount_from_quantity(deposit.consumed.quantity)?,
             nonce,
             deadline,
-            action_tree_root: deposit.action_tree_root()?.into(),
+            action_tree_root: action_tree_root.into(),
         }
         .base64_digest())
     }
 
-    /// The action's witnesses, `discovery_pk` and `rng` as
-    /// [`Deposit::action`]'s.
+    /// The logic witnesses of the wrap's resources, consumed then created, in
+    /// an action of tree root `root` in which the created resource is laid
+    /// out as `created`. `auth` is the user's authorization of the wrap in
+    /// that action; `discovery_pk` and `rng` are as
+    /// [`Deposit::logic_witnesses`]'s.
+    pub fn logic_witnesses(
+        &self,
+        created: Resource,
+        root: Digest,
+        auth: WrapAuth,
+        discovery_pk: &AffinePoint,
+        rng: &mut impl CryptoRngCore,
+    ) -> [L; 2] {
+        let deposit = &self.deposit;
+        deposit.logic_witnesses(
+            self.mint_logic(root, auth),
+            created,
+            root,
+            discovery_pk,
+            rng,
+        )
+    }
+
+    /// The witnesses of the action of the wrap alone, `auth` its user's
+    /// authorization of that action (over `deposit.layout()`'s root), and
+    /// `discovery_pk` and `rng` as [`Deposit::logic_witnesses`]'s.
     pub fn action(
         &self,
         auth: WrapAuth,
@@ -275,43 +418,50 @@ impl<L: LogicProver + From<TransferLogic>> Wrap<L> {
         compliance: ComplianceParams<'_>,
         rng: &mut impl CryptoRngCore,
     ) -> Result<TransferAction<L>, ArmError> {
-        let deposit = &self.deposit;
-        deposit.action(
-            |root| {
-                TransferLogic::mint_resource_logic_with_wrap_auth(
-                    deposit.consumed,
-                    root,
-                    NullifierKey::default(),
-                    deposit.label.clone(),
-                    auth.user,
-                    auth.info,
-                )
-                .into()
-            },
+        self.deposit.action(
+            |root| self.mint_logic(root, auth),
             discovery_pk,
             compliance,
             rng,
         )
     }
+
+    /// The logic of the wrap's consumed resource in an action of tree root
+    /// `root`.
+    fn mint_logic(&self, root: Digest, auth: WrapAuth) -> L {
+        let deposit = &self.deposit;
+        TransferLogic::mint_resource_logic_with_wrap_auth(
+            deposit.consumed,
+            root,
+            NullifierKey::default(),
+            deposit.label.clone(),
+            auth.user,
+            auth.info,
+        )
+        .into()
+    }
 }
 
 /// An unwrap: the owner spends a shielded resource into an ephemeral one
 /// whose logic commits the forwarder call releasing the escrowed tokens to
-/// `recipient`.
+/// `recipient`. Its created resource exists only in a [`Layout`].
 pub struct Unwrap<L = TransferLogic> {
     pub label: LabelInfo,
     pub owner: Owner,
     pub recipient: [u8; 32],
     pub consumed: Resource,
-    pub created: Resource,
+    /// The consumed resource's path in the adapter's commitment tree.
+    pub cm_merkle_path: MerklePath,
     logic: PhantomData<L>,
 }
 
 /// The resources of an unwrap of `wrapped`, `owner`'s shielded resource of
-/// the logic `L` under `label`, to the Solana account `recipient`.
+/// the logic `L` under `label` at `cm_merkle_path` in the adapter's
+/// commitment tree, to the Solana account `recipient`.
 pub fn unwrap<L: LogicProver>(
     label: LabelInfo,
     wrapped: Resource,
+    cm_merkle_path: MerklePath,
     owner: Owner,
     recipient: [u8; 32],
 ) -> Result<Unwrap<L>, ArmError> {
@@ -320,50 +470,56 @@ pub fn unwrap<L: LogicProver>(
             "The unwrapped resource is not of the unwrap's logic".to_string(),
         ));
     }
-    let created = ephemeral_resource(
-        wrapped.logic_ref,
-        wrapped.label_ref,
-        calculate_value_ref_from_solana_account(&recipient),
-        wrapped.quantity,
-        Resource::derive_nonce_from_nullifiers(0, &[wrapped.nullifier(&owner.nf_key)?])?,
-    );
     Ok(Unwrap {
         label,
         owner,
         recipient,
         consumed: wrapped,
-        created,
+        cm_merkle_path,
         logic: PhantomData,
     })
 }
 
 impl<L: LogicProver + From<TransferLogic>> Unwrap<L> {
-    /// What the owner signs under the logic's domain.
-    pub fn action_tree_root(&self) -> Result<Digest, ArmError> {
-        action_tree_root(self.consumed.nullifier(&self.owner.nf_key)?, &self.created)
+    /// The unwrap's resources for a [`Layout`], consumed then created: the
+    /// created resource is the ephemeral resource of the consumed quantity
+    /// to `recipient`, with nonce zero, which [`Layout::new`] overwrites with
+    /// the nonce of its place in the action. Read it from the layout.
+    pub fn resources(&self) -> [ResourceWitness; 2] {
+        let consumed = self.consumed;
+        [
+            ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource_with_path(
+                consumed,
+                self.owner.nf_key.clone(),
+                self.cm_merkle_path.clone(),
+            )),
+            ResourceWitness::Created(ephemeral_resource(
+                consumed.logic_ref,
+                consumed.label_ref,
+                calculate_value_ref_from_solana_account(&self.recipient),
+                consumed.quantity,
+                [0; 32],
+            )),
+        ]
     }
 
-    /// The action's witnesses. `auth_sig` is the owner's signature over the
-    /// action tree root; `cm_merkle_path` is the wrapped resource's path in
-    /// the adapter's commitment tree.
-    pub fn action(
+    /// The layout of the action of the unwrap alone.
+    pub fn layout(&self) -> Result<Layout, ArmError> {
+        Layout::new(self.resources().into())
+    }
+
+    /// The logic witnesses of the unwrap's resources, consumed then created,
+    /// in an action of tree root `root` in which the created resource is laid
+    /// out as `created`. `auth_sig` is the owner's signature over `root`
+    /// under the logic's domain.
+    pub fn logic_witnesses(
         &self,
+        created: Resource,
+        root: Digest,
         auth_sig: AuthoritySignature,
-        cm_merkle_path: MerklePath,
-        compliance: ComplianceParams<'_>,
-    ) -> Result<TransferAction<L>, ArmError> {
-        let root = self.action_tree_root()?;
-        Ok(TransferAction {
-            compliance_witness: compliance_witness(
-                ConsumedResourceWitness::from_resource_with_path(
-                    self.consumed,
-                    self.owner.nf_key.clone(),
-                    cm_merkle_path,
-                ),
-                self.created,
-                compliance,
-            ),
-            consumed_logic: TransferLogic::consume_persistent_resource_logic(
+    ) -> [L; 2] {
+        [
+            TransferLogic::consume_persistent_resource_logic(
                 self.consumed,
                 root,
                 self.owner.nf_key.clone(),
@@ -371,13 +527,20 @@ impl<L: LogicProver + From<TransferLogic>> Unwrap<L> {
                 auth_sig,
             )
             .into(),
-            created_logic: TransferLogic::burn_resource_logic(
-                self.created,
-                root,
-                self.label.clone(),
-                self.recipient,
-            )
-            .into(),
-        })
+            TransferLogic::burn_resource_logic(created, root, self.label.clone(), self.recipient)
+                .into(),
+        ]
+    }
+
+    /// The witnesses of the action of the unwrap alone, `auth_sig` the
+    /// owner's signature over [`Unwrap::layout`]'s root.
+    pub fn action(
+        &self,
+        auth_sig: AuthoritySignature,
+        compliance: ComplianceParams<'_>,
+    ) -> Result<TransferAction<L>, ArmError> {
+        let layout = self.layout()?;
+        let logic_witnesses = self.logic_witnesses(layout.resource(1), layout.root(), auth_sig);
+        layout.action(logic_witnesses.into(), compliance)
     }
 }

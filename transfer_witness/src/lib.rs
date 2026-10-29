@@ -446,7 +446,7 @@ impl<C: ForwarderCall> LogicCircuit for TokenTransferWitness<C> {
         Ok(LogicInstance {
             tag,
             is_consumed: self.is_consumed,
-            root: self.action_tree_root,
+            action_tree_root: self.action_tree_root,
             app_data,
         })
     }

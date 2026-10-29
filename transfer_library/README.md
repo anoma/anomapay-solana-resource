@@ -24,12 +24,25 @@ creates for the recipient. Each flow is of a logic `L`, `TransferLogic` or a
 logic that extends it (`wrap::<TransferLogic>(..)`): its resources carry
 `L`'s verifying key and its witnesses are `L`'s. A wrap's resources are a
 `Deposit`, the shape any call bringing a quantity into the shielded pool
-shares. `Wrap::signed_message` is the text the user's wallet signs, and
-`Wrap::action` / `Unwrap::action` produce a `TransferAction<L>`: the
-compliance witness and both logic witnesses, in tag order, which
-`TransferAction::prove` proves in-process into a balanced transaction, or
-which a caller with its own prover (a proving queue, a mock prover) proves
-itself.
+shares. A flow's created resource exists only in its action's layout, which
+sets its nonce: read it from there.
+
+An action is built in two steps. `Layout::new` takes the resources of one or
+several flows (each flow's `resources()`, consumed then created) in the
+caller's order, which is the order of the resources in the compliance
+instance and of the forwarder calls. It derives each created resource's nonce
+from its place among them and gives the laid-out resources, their tags and
+the action tree root, which the owners and users sign, in process or not.
+`Wrap::signed_message` is the text the user's wallet signs for that root.
+Each flow's `logic_witnesses` makes its logic witnesses from its laid-out
+created resource, the root and its signature, and `Layout::action` takes the
+logic witnesses in the layout's order and returns a `TransferAction<L>`: the
+compliance witness and the logic witnesses, which `TransferAction::prove`
+proves in-process into a balanced transaction, or which a caller with its own
+prover (a proving queue, a mock prover) proves itself.
+
+`Wrap::action` and `Unwrap::action` do both steps for an action of that flow
+alone, given the signature over its `layout()`'s root.
 
 ## Guest artifacts
 

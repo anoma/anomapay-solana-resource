@@ -4,7 +4,7 @@
 use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
     Digest,
-    kind_table::KindTable,
+    kind_tree::KindTree,
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::{JournalEncoding, ProofType},
@@ -44,7 +44,7 @@ const LEGACY_FORWARDER_PROGRAM_ID: [u8; 32] = [11u8; 32];
 const SPL_TOKEN_MINT: [u8; 32] = [1u8; 32];
 const RECIPIENT: [u8; 32] = [2u8; 32];
 
-static EMPTY_KIND_TABLE: LazyLock<KindTable> = LazyLock::new(KindTable::empty);
+static EMPTY_KIND_TREE: LazyLock<KindTree> = LazyLock::new(KindTree::empty);
 
 fn label() -> LabelInfo {
     LabelInfo {
@@ -56,7 +56,7 @@ fn label() -> LabelInfo {
 fn compliance_params() -> ComplianceParams<'static> {
     ComplianceParams {
         rcv: Scalar::ONE.to_bytes().to_vec(),
-        kind_table: &EMPTY_KIND_TABLE,
+        kind_tree: &EMPTY_KIND_TREE,
     }
 }
 
@@ -98,7 +98,7 @@ fn transfer_logic_resource(
 }
 
 fn verify(tx: &Transaction) {
-    anoma_rm_risc0::transaction::verify(tx, EMPTY_KIND_TABLE.root(), JournalEncoding::Risc0Serde)
+    anoma_rm_risc0::transaction::verify(tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
         .unwrap();
 }
 
@@ -222,12 +222,13 @@ fn migration_proves_balances_and_its_resource_unwraps() {
         [9u8; 32],
     )
     .unwrap();
-    let created = migration.deposit.created;
+    let layout = migration.deposit.layout().unwrap();
+    let created = layout.resource(1);
     assert_eq!(created.quantity, 1000);
     assert_eq!(created.logic_ref, EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID);
     let auth_sig = auth_sk.sign(
         EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
-        migration.deposit.action_tree_root().unwrap().as_bytes(),
+        layout.root().as_bytes(),
     );
     let tx = migration
         .action(
@@ -270,20 +271,25 @@ fn migration_proves_balances_and_its_resource_unwraps() {
         })
     );
 
-    let unwrap =
-        unwrap::<EmergencyMigratingTransferLogic>(label(), created, new_owner.clone(), RECIPIENT)
-            .unwrap();
+    let unwrap = unwrap::<EmergencyMigratingTransferLogic>(
+        label(),
+        created,
+        MerklePath::empty(),
+        new_owner.clone(),
+        RECIPIENT,
+    )
+    .unwrap();
     assert_eq!(
-        unwrap.created.logic_ref,
+        unwrap.layout().unwrap().resource(1).logic_ref,
         EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID
     );
     let auth_sig = auth_sk.sign(
         EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
-        unwrap.action_tree_root().unwrap().as_bytes(),
+        unwrap.layout().unwrap().root().as_bytes(),
     );
     verify(
         &unwrap
-            .action(auth_sig, MerklePath::empty(), compliance_params())
+            .action(auth_sig, compliance_params())
             .unwrap()
             .prove(ProofType::Succinct)
             .unwrap(),
@@ -303,10 +309,15 @@ fn an_unwrap_refuses_a_resource_of_another_logic() {
         2,
         MerklePath::empty(),
     );
-    let err =
-        unwrap::<EmergencyMigratingTransferLogic>(label(), entry.resource, old_owner, RECIPIENT)
-            .err()
-            .expect("the unwrap refuses the resource");
+    let err = unwrap::<EmergencyMigratingTransferLogic>(
+        label(),
+        entry.resource,
+        MerklePath::empty(),
+        old_owner,
+        RECIPIENT,
+    )
+    .err()
+    .expect("the unwrap refuses the resource");
     assert!(
         err.to_string().contains("not of the unwrap's logic"),
         "unexpected error: {err}"

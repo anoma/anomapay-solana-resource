@@ -36,7 +36,7 @@ pub fn migrate(
     let quantity = total_quantity(&entries)?;
     Ok(Migrate {
         entries,
-        deposit: deposit(label, quantity, ephemeral_nonce, owner, rand_seed)?,
+        deposit: deposit(label, quantity, ephemeral_nonce, owner, rand_seed),
     })
 }
 
