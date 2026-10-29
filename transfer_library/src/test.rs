@@ -559,16 +559,16 @@ fn single_flow_actions_are_pinned() {
         (wrap_root, wrap_digest, unwrap_root, unwrap_digest),
         (
             Digest::from_bytes(hex!(
-                "737824905073cdaa593b1ebb79e35d433d152a6194b6aa0987a519cb1d729064"
+                "70943c8749161901cf65b523bfb967604abef09a31ad2d7388fc50bf1cd6e1fa"
             )),
             Digest::from_bytes(hex!(
-                "2823324b789d47e176dac262687095f917c22bc14fc4c8633fba77e7adedc18e"
+                "530dd6508245f5532d4e377d7463a77f0f71d18dbdf5695f28a4898a40e6d074"
             )),
             Digest::from_bytes(hex!(
-                "ea393da08b591e9249f601ff4477bf38b7464e893d0c77f404f5e52ef10e2e07"
+                "60cf089a3714b37397280f1a08493e52a591891127f551ea224ab1ad39711228"
             )),
             Digest::from_bytes(hex!(
-                "b2036169556c7cecdf73324ff56e827099c9ee7d155f7018579a26b196d53c6c"
+                "8b1693dfe87af2622f3335dece9e9bad9176f28ba5aabce7bf95d11b5a724ec6"
             )),
         ),
         "a single-flow action's root or witnesses changed"
