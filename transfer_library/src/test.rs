@@ -5,9 +5,8 @@
 // set it when running these locally.
 use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
-    Digest,
-    action_tree::ActionTree,
-    compliance,
+    Digest, compliance,
+    error::ArmError,
     kind_tree::KindTree,
     logic_instance::LogicInstance,
     logic_proof::{LogicProver, LogicVerifier, get_instance, verify},
@@ -36,7 +35,9 @@ use transfer_witness::{
     calculate_value_ref_from_solana_account, wire,
 };
 
-use crate::action::{ComplianceParams, Owner, TransferAction, Wrap, WrapAuth, build, unwrap, wrap};
+use crate::action::{
+    ComplianceParams, Deposit, Layout, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap,
+};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 use hex_literal::hex;
 
@@ -445,23 +446,20 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         [5u8; 32],
         owner.clone(),
         [6u8; 32],
-    )
-    .unwrap();
-    assert_eq!(wrap.deposit.created.value_ref, owner.value_ref());
-    assert_eq!(wrap.deposit.created.quantity, QUANTITY);
+    );
+    let wrap_layout = wrap.deposit.layout().unwrap();
+    let wrapped = wrap_layout.resource(1);
+    assert_eq!(wrapped.value_ref, owner.value_ref());
+    assert_eq!(wrapped.quantity, QUANTITY);
     let auth = WrapAuth {
         user: SOLANA_ACCOUNT,
         info: wrap_auth(),
     };
     // base64 of a 32-byte hash: what the wallet signs.
     assert_eq!(
-        wrap.signed_message(
-            WRAP_NONCE,
-            WRAP_DEADLINE,
-            wrap.deposit.action_tree_root().unwrap()
-        )
-        .unwrap()
-        .len(),
+        wrap.signed_message(WRAP_NONCE, WRAP_DEADLINE, wrap_layout.root())
+            .unwrap()
+            .len(),
         44
     );
     let (_, discovery_pk) = random_keypair();
@@ -472,31 +470,26 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         .unwrap();
     anoma_rm_risc0::transaction::verify(&wrap_tx, kind_tree_root, JournalEncoding::Risc0Serde)
         .unwrap();
-    assert_eq!(
-        tags_of(&wrap_tx),
-        vec![
-            wrap.deposit
-                .consumed
-                .nullifier(&NullifierKey::default())
-                .unwrap(),
-            wrap.deposit.created.commitment()
-        ]
-    );
+    assert_eq!(tags_of(&wrap_tx), wrap_layout.tags());
 
-    let unwrap =
-        unwrap::<TransferLogic>(label(), wrap.deposit.created, owner.clone(), SOLANA_ACCOUNT)
-            .unwrap();
-    assert_eq!(unwrap.created.quantity, QUANTITY);
+    let unwrap = unwrap::<TransferLogic>(
+        label(),
+        wrapped,
+        MerklePath::empty(),
+        owner.clone(),
+        SOLANA_ACCOUNT,
+    )
+    .unwrap();
+    let unwrap_layout = unwrap.layout().unwrap();
+    let released = unwrap_layout.resource(1);
+    assert_eq!(released.quantity, QUANTITY);
     assert_eq!(
-        unwrap.created.value_ref,
+        released.value_ref,
         calculate_value_ref_from_solana_account(&SOLANA_ACCOUNT)
     );
-    let auth_sig = auth_sk.sign(
-        AUTH_SIGNATURE_DOMAIN,
-        unwrap.action_tree_root().unwrap().as_bytes(),
-    );
+    let auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, unwrap_layout.root().as_bytes());
     let unwrap_tx = unwrap
-        .action(auth_sig, MerklePath::empty(), compliance_params())
+        .action(auth_sig, compliance_params())
         .unwrap()
         .prove(ProofType::Succinct)
         .unwrap();
@@ -505,8 +498,8 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
     assert_eq!(
         tags_of(&unwrap_tx),
         vec![
-            wrap.deposit.created.nullifier(&owner.nf_key).unwrap(),
-            unwrap.created.commitment()
+            wrapped.nullifier(&owner.nf_key).unwrap(),
+            released.commitment()
         ]
     );
 }
@@ -539,22 +532,23 @@ fn single_flow_actions_are_pinned() {
             &mut ChaCha20Rng::seed_from_u64(1),
         )
         .unwrap();
-    let wrap_root = wrap.deposit.action_tree_root().unwrap();
+    let wrap_layout = wrap.deposit.layout().unwrap();
+    let wrap_root = wrap_layout.root();
     let wrap_digest = witnesses_digest(&wrap_action);
     println!("wrap: action tree root {wrap_root}, witnesses {wrap_digest}");
 
     let unwrap = unwrap::<TransferLogic>(
         label(),
-        wrap.deposit.created,
-        test_wrap().deposit.owner,
+        wrap_layout.resource(1),
+        MerklePath::empty(),
+        wrap.deposit.owner.clone(),
         SOLANA_ACCOUNT,
     )
     .unwrap();
-    let unwrap_root = unwrap.action_tree_root().unwrap();
+    let unwrap_root = unwrap.layout().unwrap().root();
     let unwrap_action = unwrap
         .action(
             auth_sk.sign(AUTH_SIGNATURE_DOMAIN, unwrap_root.as_bytes()),
-            MerklePath::empty(),
             compliance_params(),
         )
         .unwrap();
@@ -584,96 +578,46 @@ fn single_flow_actions_are_pinned() {
 /// One action of an unwrap of the test wrap's resource to `SOLANA_ACCOUNT`
 /// and a wrap of the same quantity from it, its resources in the order
 /// `order` lists them by their index in [the unwrap's consumed, the unwrap's
-/// created, the wrap's consumed, the wrap's created]: the compliance instance
-/// and the logic witnesses keep that order, each created resource's nonce
-/// derives from its index among the created resources, the owner and the
-/// user sign the action's root, and the action proves and balances.
+/// created, the wrap's consumed, the wrap's created]. The layout keeps that
+/// order, its created resources are the ones the compliance witness
+/// carries, the owner and the user sign its root, the logic witnesses are
+/// of the resources at their positions, and the action proves and balances.
 fn assert_multi_flow_action_keeps_the_order(order: [usize; 4]) {
     let (auth_sk, _, _, _) = owner_keys();
-    let owner = test_wrap().deposit.owner;
-    let wrapped = test_wrap().deposit.created;
-    let unwrap = unwrap::<TransferLogic>(label(), wrapped, owner.clone(), SOLANA_ACCOUNT).unwrap();
-    let wrap = wrap::<TransferLogic>(
+    let wrapped = test_wrap().deposit.layout().unwrap().resource(1);
+    let Deposit { owner, .. } = test_wrap().deposit;
+    let unwrap = unwrap::<TransferLogic>(
         label(),
-        QUANTITY as u64,
-        [11u8; 32],
+        wrapped,
+        MerklePath::empty(),
         owner.clone(),
-        [12u8; 32],
+        SOLANA_ACCOUNT,
     )
     .unwrap();
+    let wrap = wrap::<TransferLogic>(label(), QUANTITY as u64, [11u8; 32], owner, [12u8; 32]);
 
-    let mut owner_signed = None;
-    let mut user_signed = None;
-    let (_, discovery_pk) = random_keypair();
-    let mut rng = OsRng;
-    let action = {
-        let unwrap_parts = unwrap.parts(
-            |root| {
-                owner_signed = Some(root);
-                auth_sk.sign(AUTH_SIGNATURE_DOMAIN, root.as_bytes())
+    let [unwrap_consumed, unwrap_created] = unwrap.resources();
+    let [wrap_consumed, wrap_created] = wrap.deposit.resources();
+    let listed = [unwrap_consumed, unwrap_created, wrap_consumed, wrap_created];
+    let layout = Layout::new(order.map(|index| listed[index].clone()).into()).unwrap();
+    for (position, index) in order.into_iter().enumerate() {
+        let (laid_out, given) = (layout.resource(position), *listed[index].resource());
+        assert_eq!(
+            Resource {
+                nonce: given.nonce,
+                ..laid_out
             },
-            MerklePath::empty(),
+            given,
+            "position {position} holds listed resource {index}, up to a created resource's nonce"
         );
-        let wrap_parts = wrap.parts(
-            |root| {
-                user_signed = Some((root, wrap.signed_message(WRAP_NONCE, WRAP_DEADLINE, root)?));
-                Ok(WrapAuth {
-                    user: SOLANA_ACCOUNT,
-                    info: wrap_auth(),
-                })
-            },
-            &discovery_pk,
-            &mut rng,
-        );
-        let mut parts = [
-            Some(unwrap_parts.consumed),
-            Some(unwrap_parts.created),
-            Some(wrap_parts.consumed),
-            Some(wrap_parts.created),
-        ];
-        let listed = order.map(|index| parts[index].take().unwrap());
-        build(listed.into(), compliance_params()).unwrap()
-    };
+    }
+    let position_of = |index| order.iter().position(|&listed| listed == index).unwrap();
 
-    let nullifiers = [
-        wrapped.nullifier(&owner.nf_key).unwrap(),
-        wrap.deposit
-            .consumed
-            .nullifier(&NullifierKey::default())
-            .unwrap(),
-    ];
-    let created = [unwrap.created, wrap.deposit.created]
-        .into_iter()
-        .enumerate()
-        .map(|(index, resource)| Resource {
-            nonce: Resource::derive_nonce_from_nullifiers(index as u32, &nullifiers).unwrap(),
-            ..resource
-        })
-        .collect::<Vec<_>>();
-    let tags = [
-        nullifiers[0],
-        created[0].commitment(),
-        nullifiers[1],
-        created[1].commitment(),
-    ];
-    let resources = [wrapped, created[0], wrap.deposit.consumed, created[1]];
-    let expected_tags = order.map(|index| tags[index]);
-    let instance = compliance::constrain(&action.compliance_witness).unwrap();
-    let instance_tags = instance.tags().collect::<Vec<_>>();
-    println!("order {order:?}: compliance instance tags {instance_tags:?}");
-    assert_eq!(
-        instance_tags, expected_tags,
-        "the compliance instance lists the resources in the caller's order"
-    );
-
-    let root = ActionTree::new(expected_tags.to_vec()).root().unwrap();
-    assert_eq!(
-        owner_signed,
-        Some(root),
-        "the owner signs the action's root"
-    );
-    let (user_root, message) = user_signed.unwrap();
-    assert_eq!(user_root, root, "the user signs the action's root");
+    let root = layout.root();
+    let owner_signature = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, root.as_bytes());
+    let message = wrap
+        .signed_message(WRAP_NONCE, WRAP_DEADLINE, root)
+        .unwrap();
     assert_eq!(
         message,
         forwarder_client::WrapMessage {
@@ -687,22 +631,55 @@ fn assert_multi_flow_action_keeps_the_order(order: [usize; 4]) {
         .base64_digest(),
         "the wrap message names the action's root"
     );
-    for (position, (logic, index)) in action.logic_witnesses.iter().zip(order).enumerate() {
+    let [unwrap_consumed_logic, unwrap_created_logic] =
+        unwrap.logic_witnesses(layout.resource(position_of(1)), root, owner_signature);
+    let (_, discovery_pk) = random_keypair();
+    let [wrap_consumed_logic, wrap_created_logic] = wrap.logic_witnesses(
+        layout.resource(position_of(3)),
+        root,
+        WrapAuth {
+            user: SOLANA_ACCOUNT,
+            info: wrap_auth(),
+        },
+        &discovery_pk,
+        &mut OsRng,
+    );
+    let mut logics = [
+        Some(unwrap_consumed_logic),
+        Some(unwrap_created_logic),
+        Some(wrap_consumed_logic),
+        Some(wrap_created_logic),
+    ];
+    let logic_witnesses = order.map(|index| logics[index].take().unwrap());
+    for (position, logic) in logic_witnesses.iter().enumerate() {
         assert_eq!(
-            (logic.witness.resource, logic.witness.is_consumed),
-            (resources[index], index % 2 == 0),
-            "logic witness {position} is of the resource listed there"
-        );
-        assert_eq!(
-            logic.witness.action_tree_root, root,
-            "logic witness {position} is of the action's root"
+            logic.witness.resource,
+            layout.resource(position),
+            "logic witness {position} is of the resource laid out there"
         );
     }
+
+    let action = layout
+        .clone()
+        .action(logic_witnesses.into(), compliance_params())
+        .unwrap();
+    assert!(
+        action.compliance_witness.resource_witnesses == layout.resources(),
+        "the compliance witness carries the layout's resources, created nonces included"
+    );
+    let instance = compliance::constrain(&action.compliance_witness).unwrap();
+    let instance_tags = instance.tags().collect::<Vec<_>>();
+    println!("order {order:?}: compliance instance tags {instance_tags:?}");
+    assert_eq!(
+        instance_tags,
+        layout.tags(),
+        "the compliance instance lists the layout's tags"
+    );
 
     let tx = action.prove(ProofType::Succinct).unwrap();
     anoma_rm_risc0::transaction::verify(&tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
         .unwrap();
-    assert_eq!(tags_of(&tx), expected_tags);
+    assert_eq!(tags_of(&tx), layout.tags());
 }
 
 #[test]
@@ -717,6 +694,34 @@ fn multi_flow_action_with_interleaved_flows_keeps_its_order() {
     assert_multi_flow_action_keeps_the_order([0, 2, 1, 3]);
 }
 
+/// The logic witnesses an action is given must be one per laid-out
+/// resource.
+#[test]
+fn an_action_refuses_a_logic_witness_count_other_than_its_resources() {
+    let wrap = test_wrap();
+    let layout = wrap.deposit.layout().unwrap();
+    let [consumed_logic, _] = wrap.logic_witnesses(
+        layout.resource(1),
+        layout.root(),
+        WrapAuth {
+            user: SOLANA_ACCOUNT,
+            info: wrap_auth(),
+        },
+        &generate_public_key(&Scalar::from(ENCRYPTION_SK)),
+        &mut OsRng,
+    );
+    let Err(err) = layout.action(vec![consumed_logic], compliance_params()) else {
+        panic!("an action of two resources and one logic witness must be refused");
+    };
+    assert_eq!(
+        err,
+        ArmError::LogicVerifierInputCountMismatch {
+            expected: 2,
+            found: 1
+        }
+    );
+}
+
 /// A wrap of the test owner with fixed nonces: its action differs between
 /// calls only by the randomness the created resource's encryption draws.
 fn test_wrap() -> Wrap {
@@ -724,7 +729,7 @@ fn test_wrap() -> Wrap {
         value: owner_value(),
         nf_key: NullifierKey::from_bytes(NF_KEY_BYTES),
     };
-    wrap(label(), QUANTITY as u64, [5u8; 32], owner, [6u8; 32]).unwrap()
+    wrap(label(), QUANTITY as u64, [5u8; 32], owner, [6u8; 32])
 }
 
 /// The signed message carries the SPL amount the circuit commits to, so a
