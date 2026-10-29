@@ -36,7 +36,7 @@ use transfer_witness::{
 };
 
 use crate::action::{
-    ComplianceParams, Deposit, Layout, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap,
+    ComplianceParams, Layout, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap,
 };
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 use hex_literal::hex;
@@ -584,8 +584,9 @@ fn single_flow_actions_are_pinned() {
 /// of the resources at their positions, and the action proves and balances.
 fn assert_multi_flow_action_keeps_the_order(order: [usize; 4]) {
     let (auth_sk, _, _, _) = owner_keys();
-    let wrapped = test_wrap().deposit.layout().unwrap().resource(1);
-    let Deposit { owner, .. } = test_wrap().deposit;
+    let first_wrap = test_wrap();
+    let wrapped = first_wrap.deposit.layout().unwrap().resource(1);
+    let owner = first_wrap.deposit.owner;
     let unwrap = unwrap::<TransferLogic>(
         label(),
         wrapped,
