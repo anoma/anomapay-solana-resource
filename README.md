@@ -108,8 +108,11 @@ RISC0_DEV_MODE=1 cargo test --workspace
 
 ## Versioning
 
-The workspace crates share the version in `[workspace.package]`. The circuit
-crates are versioned independently.
+The witness crates share the version in `[workspace.package]`. The library
+crates (`transfer_library`, `emergency_migrating_transfer_library`) carry their
+own version, so a host-only release does not rename the witness crates the
+guests link, which would change their image ids. The circuit crates are
+versioned independently.
 
 ## License
 
