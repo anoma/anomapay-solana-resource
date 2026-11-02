@@ -62,7 +62,7 @@ settlement transaction (`WrapAuthInfo` names the instruction).
 Host-side proving API. `TransferLogic` wraps `TokenTransferWitness` with
 constructors for the supported flows (consume and create persistent resources,
 mint via wrap, burn via unwrap) and implements ARM's `LogicProver`. The
-`action` module builds a whole wrap or unwrap from keys and amounts: the
+`action` module builds a whole wrap, unwrap or transfer from keys and amounts: the
 resources it consumes and creates, the message the user signs, and the
 compliance and logic witnesses of the action, proven in-process or by the
 caller's prover. `action::Layout` puts the resources of several flows into
@@ -108,8 +108,11 @@ RISC0_DEV_MODE=1 cargo test --workspace
 
 ## Versioning
 
-The workspace crates share the version in `[workspace.package]`. The circuit
-crates are versioned independently.
+The witness crates share the version in `[workspace.package]`. The library
+crates (`transfer_library`, `emergency_migrating_transfer_library`) carry their
+own version, so a host-only release does not rename the witness crates the
+guests link, which would change their image ids. The circuit crates are
+versioned independently.
 
 ## License
 

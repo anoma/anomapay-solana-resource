@@ -17,10 +17,13 @@ constructors build the witness for each supported flow:
 
 ## Actions
 
-`action::wrap` and `action::unwrap` build a flow's resources from its keys and
-terms: the ephemeral resource a wrap consumes and the owner's shielded resource
-it creates, or the shielded resource an unwrap consumes and the ephemeral one it
-creates for the recipient. Each flow is of a logic `L`, `TransferLogic` or a
+`action::wrap`, `action::unwrap` and `action::transfer` build a flow's
+resources from its keys and terms: the ephemeral resource a wrap consumes and
+the owner's shielded resource it creates, the shielded resource an unwrap
+consumes and the ephemeral one it creates for the recipient, or the shielded
+resource a transfer consumes and the shielded resource of its label and
+quantity it creates for the recipient, whom a transfer knows by its public keys
+(`Recipient`, which `Owner::recipient` gives). Each flow is of a logic `L`, `TransferLogic` or a
 logic that extends it (`wrap::<TransferLogic>(..)`): its resources carry
 `L`'s verifying key and its witnesses are `L`'s. A wrap's resources are a
 `Deposit`, the shape any call bringing a quantity into the shielded pool
@@ -41,7 +44,7 @@ compliance witness and the logic witnesses, which `TransferAction::prove`
 proves in-process into a balanced transaction, or which a caller with its own
 prover (a proving queue, a mock prover) proves itself.
 
-`Wrap::action` and `Unwrap::action` do both steps for an action of that flow
+`Wrap::action`, `Unwrap::action` and `Transfer::action` do both steps for an action of that flow
 alone, given the signature over its `layout()`'s root.
 
 ## Guest artifacts
