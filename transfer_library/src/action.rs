@@ -1,5 +1,6 @@
-//! Host-side construction of the AnomaPay wrap and unwrap actions: the
-//! resources each flow consumes and creates, and the witnesses that prove it.
+//! Host-side construction of the AnomaPay wrap, unwrap and transfer actions:
+//! the resources each flow consumes and creates, and the witnesses that
+//! prove it.
 //! Each flow is of a logic `L`, the transfer logic or a logic that extends
 //! it, whose verifying key its resources carry and whose prover proves them.
 //!
@@ -26,7 +27,7 @@ use anoma_rm_risc0::{
     kind_tree::KindTree,
     logic_proof::LogicProver,
     merkle_path::MerklePath,
-    nullifier_key::NullifierKey,
+    nullifier_key::{NullifierKey, NullifierKeyCommitment},
     proving_system::ProofType,
     resource::{Resource, ResourceWitness, ResourceWitnessConsumed},
     transaction::{self, Delta, Transaction},
@@ -54,6 +55,47 @@ pub struct Owner {
 impl Owner {
     pub fn value_ref(&self) -> Digest {
         calculate_persistent_value_ref(&self.value)
+    }
+
+    /// The public keys the owner gives a sender to receive a resource.
+    pub fn recipient(&self) -> Recipient {
+        Recipient {
+            value: self.value.clone(),
+            nk_commitment: self.nf_key.commit(),
+        }
+    }
+}
+
+/// The public keys a shielded resource is created for: the authorization
+/// and encryption public keys behind its value reference, and the
+/// commitment to its holder's nullifier key, which only the holder knows.
+#[derive(Clone)]
+pub struct Recipient {
+    pub value: ValueInfo,
+    pub nk_commitment: NullifierKeyCommitment,
+}
+
+impl Recipient {
+    /// `self`'s shielded resource of the logic `logic_ref` under `label_ref`,
+    /// of `quantity`, with nonce zero, which [`Layout::new`] overwrites with
+    /// the nonce of its place in the action.
+    fn persistent_resource(
+        &self,
+        logic_ref: Digest,
+        label_ref: Digest,
+        quantity: u128,
+        rand_seed: [u8; 32],
+    ) -> Resource {
+        Resource {
+            logic_ref,
+            label_ref,
+            value_ref: calculate_persistent_value_ref(&self.value),
+            quantity,
+            is_ephemeral: false,
+            nk_commitment: self.nk_commitment,
+            rand_seed,
+            ..Default::default()
+        }
     }
 }
 
@@ -196,6 +238,15 @@ impl Layout {
     }
 }
 
+/// Refuses `resource` with `refusal` unless it is of the logic `L`, as a
+/// flow consuming it must be.
+fn check_logic<L: LogicProver>(resource: &Resource, refusal: &str) -> Result<(), ArmError> {
+    if resource.logic_ref != L::verifying_key() {
+        return Err(ArmError::ProveFailed(refusal.to_string()));
+    }
+    Ok(())
+}
+
 /// An ephemeral resource of the logic `logic_ref` under `label_ref`,
 /// nullified by the default key: ephemeral resources hide nothing.
 fn ephemeral_resource(
@@ -269,16 +320,12 @@ impl<L: LogicProver + From<TransferLogic>> Deposit<L> {
                 consumed,
                 NullifierKey::default(),
             )),
-            ResourceWitness::Created(Resource {
-                logic_ref: consumed.logic_ref,
-                label_ref: consumed.label_ref,
-                value_ref: self.owner.value_ref(),
-                quantity: consumed.quantity,
-                is_ephemeral: false,
-                nk_commitment: self.owner.nf_key.commit(),
-                rand_seed: self.rand_seed,
-                ..Default::default()
-            }),
+            ResourceWitness::Created(self.owner.recipient().persistent_resource(
+                consumed.logic_ref,
+                consumed.label_ref,
+                consumed.quantity,
+                self.rand_seed,
+            )),
         ]
     }
 
@@ -465,11 +512,10 @@ pub fn unwrap<L: LogicProver>(
     owner: Owner,
     recipient: [u8; 32],
 ) -> Result<Unwrap<L>, ArmError> {
-    if wrapped.logic_ref != L::verifying_key() {
-        return Err(ArmError::ProveFailed(
-            "The unwrapped resource is not of the unwrap's logic".to_string(),
-        ));
-    }
+    check_logic::<L>(
+        &wrapped,
+        "The unwrapped resource is not of the unwrap's logic",
+    )?;
     Ok(Unwrap {
         label,
         owner,
@@ -541,6 +587,127 @@ impl<L: LogicProver + From<TransferLogic>> Unwrap<L> {
     ) -> Result<TransferAction<L>, ArmError> {
         let layout = self.layout()?;
         let logic_witnesses = self.logic_witnesses(layout.resource(1), layout.root(), auth_sig);
+        layout.action(logic_witnesses.into(), compliance)
+    }
+}
+
+/// A transfer: the owner spends a shielded resource and creates a shielded
+/// resource of its label and quantity for `recipient`. Its created resource
+/// exists only in a [`Layout`].
+pub struct Transfer<L = TransferLogic> {
+    pub label: LabelInfo,
+    pub owner: Owner,
+    pub recipient: Recipient,
+    pub consumed: Resource,
+    /// The consumed resource's path in the adapter's commitment tree.
+    pub cm_merkle_path: MerklePath,
+    /// The created resource's `rand_seed`.
+    rand_seed: [u8; 32],
+    logic: PhantomData<L>,
+}
+
+/// The resources of a transfer of `sent`, `owner`'s shielded resource of the
+/// logic `L` under `label` at `cm_merkle_path` in the adapter's commitment
+/// tree, to `recipient`. `rand_seed` is the created resource's.
+pub fn transfer<L: LogicProver>(
+    label: LabelInfo,
+    sent: Resource,
+    cm_merkle_path: MerklePath,
+    owner: Owner,
+    recipient: Recipient,
+    rand_seed: [u8; 32],
+) -> Result<Transfer<L>, ArmError> {
+    check_logic::<L>(
+        &sent,
+        "The transferred resource is not of the transfer's logic",
+    )?;
+    Ok(Transfer {
+        label,
+        owner,
+        recipient,
+        consumed: sent,
+        cm_merkle_path,
+        rand_seed,
+        logic: PhantomData,
+    })
+}
+
+impl<L: LogicProver + From<TransferLogic>> Transfer<L> {
+    /// The transfer's resources for a [`Layout`], consumed then created: the
+    /// created resource is the recipient's shielded resource of the consumed
+    /// quantity, with nonce zero, which [`Layout::new`] overwrites with the
+    /// nonce of its place in the action. Read it from the layout.
+    pub fn resources(&self) -> [ResourceWitness; 2] {
+        let consumed = self.consumed;
+        [
+            ResourceWitness::Consumed(ResourceWitnessConsumed::from_resource_with_path(
+                consumed,
+                self.owner.nf_key.clone(),
+                self.cm_merkle_path.clone(),
+            )),
+            ResourceWitness::Created(self.recipient.persistent_resource(
+                consumed.logic_ref,
+                consumed.label_ref,
+                consumed.quantity,
+                self.rand_seed,
+            )),
+        ]
+    }
+
+    /// The layout of the action of the transfer alone.
+    pub fn layout(&self) -> Result<Layout, ArmError> {
+        Layout::new(self.resources().into())
+    }
+
+    /// The logic witnesses of the transfer's resources, consumed then
+    /// created, in an action of tree root `root` in which the created
+    /// resource is laid out as `created`. `auth_sig` is the owner's signature
+    /// over `root` under the logic's domain; `discovery_pk` is the key the
+    /// created resource's discovery payload is encrypted to, and the
+    /// encryption keys and nonces of its payloads are drawn from `rng`.
+    pub fn logic_witnesses(
+        &self,
+        created: Resource,
+        root: Digest,
+        auth_sig: AuthoritySignature,
+        discovery_pk: &AffinePoint,
+        rng: &mut impl CryptoRngCore,
+    ) -> [L; 2] {
+        [
+            TransferLogic::consume_persistent_resource_logic(
+                self.consumed,
+                root,
+                self.owner.nf_key.clone(),
+                self.owner.value.clone(),
+                auth_sig,
+            )
+            .into(),
+            TransferLogic::create_persistent_resource_logic(
+                created,
+                root,
+                discovery_pk,
+                self.recipient.value.clone(),
+                self.label.clone(),
+                rng,
+            )
+            .into(),
+        ]
+    }
+
+    /// The witnesses of the action of the transfer alone, `auth_sig` the
+    /// owner's signature over [`Transfer::layout`]'s root, and
+    /// `discovery_pk` and `rng` as [`Transfer::logic_witnesses`]'s.
+    pub fn action(
+        &self,
+        auth_sig: AuthoritySignature,
+        discovery_pk: &AffinePoint,
+        compliance: ComplianceParams<'_>,
+        rng: &mut impl CryptoRngCore,
+    ) -> Result<TransferAction<L>, ArmError> {
+        let layout = self.layout()?;
+        let root = layout.root();
+        let logic_witnesses =
+            self.logic_witnesses(layout.resource(1), root, auth_sig, discovery_pk, rng);
         layout.action(logic_witnesses.into(), compliance)
     }
 }

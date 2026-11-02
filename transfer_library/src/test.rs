@@ -36,7 +36,7 @@ use transfer_witness::{
 };
 
 use crate::action::{
-    ComplianceParams, Layout, Owner, TransferAction, Wrap, WrapAuth, unwrap, wrap,
+    ComplianceParams, Layout, Owner, TransferAction, Wrap, WrapAuth, transfer, unwrap, wrap,
 };
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
 use hex_literal::hex;
@@ -52,6 +52,10 @@ const ED25519_IX_INDEX: u8 = 0;
 const AUTH_SK: [u8; 32] = [7u8; 32];
 const ENCRYPTION_SK: u32 = 8u32;
 const ACTION_TREE_ROOT: [u8; 32] = [9u8; 32];
+const RECIPIENT_AUTH_SK: [u8; 32] = [13u8; 32];
+const RECIPIENT_ENCRYPTION_SK: u32 = 14u32;
+const RECIPIENT_NF_KEY_BYTES: [u8; 32] = [15u8; 32];
+const TRANSFER_RAND_SEED: [u8; 32] = [16u8; 32];
 
 fn label() -> LabelInfo {
     LabelInfo {
@@ -89,6 +93,21 @@ fn owner_value() -> ValueInfo {
         auth_pk,
         encryption_pk,
     }
+}
+
+/// A holder other than the test owner, and the encryption secret key the
+/// payloads of the resources it receives open with.
+fn test_recipient() -> (Owner, SecretKey) {
+    let auth_sk = AuthoritySigningKey::from_bytes(&RECIPIENT_AUTH_SK).unwrap();
+    let encryption_sk = SecretKey::new(Scalar::from(RECIPIENT_ENCRYPTION_SK));
+    let recipient = Owner {
+        value: ValueInfo {
+            auth_pk: AuthorityVerifyingKey::from_signing_key(&auth_sk),
+            encryption_pk: generate_public_key(encryption_sk.inner()),
+        },
+        nf_key: NullifierKey::from_bytes(RECIPIENT_NF_KEY_BYTES),
+    };
+    (recipient, encryption_sk)
 }
 
 // A persistent resource owned by the test owner.
@@ -504,6 +523,79 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
     );
 }
 
+/// A transfer of the test wrap's resource to another holder creates that
+/// holder's resource of the same label and quantity, whose payload opens
+/// with the holder's encryption key; the action proves against the embedded
+/// guest and balances.
+#[test]
+fn transfer_action_proves_and_balances() {
+    let (auth_sk, _, _, _) = owner_keys();
+    let wrap = test_wrap();
+    let sent = wrap.deposit.layout().unwrap().resource(1);
+    let owner = wrap.deposit.owner;
+    let (recipient, recipient_encryption_sk) = test_recipient();
+
+    let transfer = transfer::<TransferLogic>(
+        label(),
+        sent,
+        MerklePath::empty(),
+        owner.clone(),
+        recipient.recipient(),
+        TRANSFER_RAND_SEED,
+    )
+    .unwrap();
+    let layout = transfer.layout().unwrap();
+    let received = layout.resource(1);
+    assert_eq!(
+        received,
+        Resource {
+            value_ref: recipient.value_ref(),
+            nonce: received.nonce,
+            nk_commitment: recipient.nf_key.commit(),
+            rand_seed: TRANSFER_RAND_SEED,
+            ..sent
+        },
+        "the received resource is the recipient's, of the sent logic, label and quantity"
+    );
+    assert_ne!(received.nonce, sent.nonce, "the layout sets the nonce");
+
+    let auth_sig = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, layout.root().as_bytes());
+    let (_, discovery_pk) = random_keypair();
+    let action = transfer
+        .action(auth_sig, &discovery_pk, compliance_params(), &mut OsRng)
+        .unwrap();
+    let resource_payload = action.logic_witnesses[1]
+        .witness
+        .constrain()
+        .unwrap()
+        .app_data
+        .resource_payload;
+    let plaintext = Ciphertext::from_words(&resource_payload[0].blob)
+        .decrypt(&recipient_encryption_sk)
+        .unwrap();
+    assert_eq!(
+        plaintext.as_bytes(),
+        bincode::serialize(&ResourceWithLabel {
+            resource: received,
+            forwarder_program_id: FORWARDER_PROGRAM_ID,
+            spl_token_mint: SPL_TOKEN_MINT,
+        })
+        .unwrap(),
+        "the recipient opens the received resource and its label"
+    );
+
+    let tx = action.prove(ProofType::Succinct).unwrap();
+    anoma_rm_risc0::transaction::verify(&tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
+        .unwrap();
+    assert_eq!(
+        tags_of(&tx),
+        vec![
+            sent.nullifier(&owner.nf_key).unwrap(),
+            received.commitment()
+        ]
+    );
+}
+
 /// The digest of an action's witnesses as the provers receive them: the
 /// compliance witness, then each logic witness, in order.
 fn witnesses_digest(action: &TransferAction) -> Digest {
@@ -693,6 +785,114 @@ fn multi_flow_action_with_the_unwrap_first_keeps_its_order() {
 #[test]
 fn multi_flow_action_with_interleaved_flows_keeps_its_order() {
     assert_multi_flow_action_keeps_the_order([0, 2, 1, 3]);
+}
+
+/// A transfer of the transfer logic refuses a resource of another logic,
+/// whose proof this logic's guest would not verify.
+#[test]
+fn a_transfer_refuses_a_resource_of_another_logic() {
+    let wrap = test_wrap();
+    let sent = Resource {
+        logic_ref: Digest::default(),
+        ..wrap.deposit.layout().unwrap().resource(1)
+    };
+    let (recipient, _) = test_recipient();
+    let err = transfer::<TransferLogic>(
+        label(),
+        sent,
+        MerklePath::empty(),
+        wrap.deposit.owner,
+        recipient.recipient(),
+        TRANSFER_RAND_SEED,
+    )
+    .err()
+    .expect("the transfer refuses the resource");
+    assert!(
+        err.to_string().contains("not of the transfer's logic"),
+        "unexpected error: {err}"
+    );
+}
+
+/// One action of a transfer of the test wrap's resource to another holder
+/// and an unwrap of a second resource of the owner's to `SOLANA_ACCOUNT`:
+/// the owner signs its root once for both consumed resources, the logic
+/// witnesses are of the resources at their positions, and the action proves
+/// and balances.
+#[test]
+fn transfer_and_unwrap_in_one_action_prove_and_balance() {
+    let (auth_sk, _, _, _) = owner_keys();
+    let first_wrap = test_wrap();
+    let transferred = first_wrap.deposit.layout().unwrap().resource(1);
+    let owner = first_wrap.deposit.owner;
+    let unwrapped = wrap::<TransferLogic>(
+        label(),
+        QUANTITY as u64,
+        [11u8; 32],
+        owner.clone(),
+        [12u8; 32],
+    )
+    .deposit
+    .layout()
+    .unwrap()
+    .resource(1);
+    let (recipient, _) = test_recipient();
+    let transfer = transfer::<TransferLogic>(
+        label(),
+        transferred,
+        MerklePath::empty(),
+        owner.clone(),
+        recipient.recipient(),
+        TRANSFER_RAND_SEED,
+    )
+    .unwrap();
+    let unwrap = unwrap::<TransferLogic>(
+        label(),
+        unwrapped,
+        MerklePath::empty(),
+        owner,
+        SOLANA_ACCOUNT,
+    )
+    .unwrap();
+
+    let layout = Layout::new(
+        transfer
+            .resources()
+            .into_iter()
+            .chain(unwrap.resources())
+            .collect(),
+    )
+    .unwrap();
+    let root = layout.root();
+    let owner_signature = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, root.as_bytes());
+    let (_, discovery_pk) = random_keypair();
+    let logic_witnesses = transfer
+        .logic_witnesses(
+            layout.resource(1),
+            root,
+            owner_signature,
+            &discovery_pk,
+            &mut OsRng,
+        )
+        .into_iter()
+        .chain(unwrap.logic_witnesses(layout.resource(3), root, owner_signature))
+        .collect::<Vec<_>>();
+    for (position, logic) in logic_witnesses.iter().enumerate() {
+        assert_eq!(
+            logic.witness.resource,
+            layout.resource(position),
+            "logic witness {position} is of the resource laid out there"
+        );
+    }
+
+    let tx = layout
+        .clone()
+        .action(logic_witnesses, compliance_params())
+        .unwrap()
+        .prove(ProofType::Succinct)
+        .unwrap();
+    anoma_rm_risc0::transaction::verify(&tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
+        .unwrap();
+    assert_eq!(tags_of(&tx), layout.tags());
 }
 
 /// The logic witnesses an action is given must be one per laid-out
