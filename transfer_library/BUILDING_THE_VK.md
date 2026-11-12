@@ -7,12 +7,21 @@ This repository has two circuits, each a guest whose RISC0 image ID is a VK:
 | `transfer_circuit` | `token-transfer-guest` | `transfer_library` | `TOKEN_TRANSFER_ID` |
 | `emergency_migrating_transfer_circuit` | `emergency-migrating-token-transfer-guest` | `emergency_migrating_transfer_library` | `EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID` |
 
-Everything below holds for both. A VK is a
-hash over the **entire compiled guest ELF**, so it is sensitive to far more than
+Everything below holds for both. A VK is the
+guest's image ID: a hash of its **loaded memory image**, the code and data and
+the ELF header its first loaded segment maps. It is sensitive to far more than
 the circuit logic: the crate names and versions, the source ids of every git
 dependency, the guest toolchain, and the **full transitive dependency graph
-frozen in the lockfile** all feed it. The only way to get a value that a third
-party can reproduce is to make every one of those inputs deterministic.
+frozen in the lockfile** all feed it (a guest-compiled crate's version alone
+changes the compiled code). The only way to get a value that a third party can
+reproduce is to make every one of those inputs deterministic.
+
+The guests carry no symbol table (`strip = "symbols"` in each circuit's release
+profile). The table's size sets the section header offset in the ELF header,
+which is loaded, so symbol names would reach the VK, and their `.llvm.<hash>`
+suffixes change with any edit to a guest-compiled crate's source, its tests and
+comments included. A library test checks that neither embedded guest has a
+symbol table.
 
 ## Canonical build
 
@@ -57,8 +66,9 @@ checked-in source.
 2. **Any change of a git dependency's source id rotates the VK.** Cargo derives
    each crate's metadata hash from its package id, which includes the git URL,
    branch or tag, and rev. Moving a pin from a branch to a tag, from a rev to a
-   branch, or to a newer rev, changes the arm crates' symbol hashes and
-   therefore the ELF, even when their source is byte-identical. Plan every
+   branch, or to a newer rev, changes the arm crates' metadata hashes and
+   with them the compiled code, even when their source is byte-identical, as a
+   version change does. Plan every
    re-pin as a rotation with its own `VK_HISTORY.md` row.
 
 3. **Commit every lockfile (the root's and each guest's) with the git sources
