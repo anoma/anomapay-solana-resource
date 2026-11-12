@@ -1796,7 +1796,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "emergency_migrating_transfer_library"
-version = "2.0.0-rc.13"
+version = "2.0.0-rc.14"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",
@@ -1806,6 +1806,7 @@ dependencies = [
  "hex-literal",
  "k256",
  "rand_core 0.6.4",
+ "risc0-binfmt",
  "risc0-zkvm",
  "serde",
  "transfer_library",
@@ -5769,7 +5770,7 @@ dependencies = [
 
 [[package]]
 name = "transfer_library"
-version = "2.0.0-rc.13"
+version = "2.0.0-rc.14"
 dependencies = [
  "anoma-pa-solana-client",
  "anoma-rm-risc0",

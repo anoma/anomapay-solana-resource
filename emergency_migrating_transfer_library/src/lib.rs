@@ -33,7 +33,7 @@ pub const EMERGENCY_MIGRATING_TOKEN_TRANSFER_ELF: &[u8] =
 
 /// The identity of the binary that executes the proofs in the zkvm.
 pub const EMERGENCY_MIGRATING_TOKEN_TRANSFER_ID: Digest = Digest::from_bytes(hex!(
-    "70f613245185c9ece6e04f155da71c4f223510a09f78bbca50030ca12092a119"
+    "346ca4cd4e6d6ed055d83730e59b4ec7d9def1fa13379c52b46de818d7cf09df"
 ));
 
 /// Holds the emergency-migrating resource logic of one resource.

@@ -17,8 +17,8 @@ use anoma_rm_risc0_gadgets::{
     encryption::random_keypair,
 };
 use anomapay_spl_token_forwarder_client::{
-    MigrateEntry as ForwarderMigrateEntry, MigrateInput, encode_migrate_forwarder_input,
-    forwarder_migrate_num_accounts,
+    FORWARDER_UNWRAP_NUM_ACCOUNTS, MigrateEntry as ForwarderMigrateEntry, MigrateInput,
+    encode_migrate_forwarder_input, encode_unwrap_forwarder_input, forwarder_migrate_num_accounts,
     generated::emergency_migrating_spl_token_forwarder::constants::OP_MIGRATE,
 };
 use emergency_migrating_transfer_witness::{
@@ -100,6 +100,36 @@ fn transfer_logic_resource(
 fn verify(tx: &Transaction) {
     anoma_rm_risc0::transaction::verify(tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
         .unwrap();
+}
+
+/// Whether the ELF `elf` has a symbol table (a section of type `SHT_SYMTAB`).
+fn has_symbol_table(elf: &[u8]) -> bool {
+    let u16_at = |at: usize| u16::from_le_bytes(elf[at..at + 2].try_into().unwrap());
+    let u32_at = |at: usize| u32::from_le_bytes(elf[at..at + 4].try_into().unwrap());
+    // ELF32: e_shoff at 0x20, e_shentsize at 0x2E, e_shnum at 0x30; a
+    // section header's sh_type follows its 4-byte sh_name.
+    let (shoff, shentsize, shnum) = (u32_at(0x20) as usize, u16_at(0x2E), u16_at(0x30));
+    (0..usize::from(shnum)).any(|i| u32_at(shoff + i * usize::from(shentsize) + 4) == 2)
+}
+
+/// Neither guest carries a symbol table. Its size sets the section header
+/// offset in the ELF header, which the guest's first loaded segment maps, so
+/// symbol names (whose `.llvm.<hash>` suffixes change with any edit to a
+/// crate's source, tests and comments included) would reach the image ID.
+#[test]
+fn neither_guest_carries_a_symbol_table() {
+    for (guest, binary) in [
+        ("token-transfer-guest", transfer_library::TOKEN_TRANSFER_ELF),
+        (
+            "emergency-migrating-token-transfer-guest",
+            EMERGENCY_MIGRATING_TOKEN_TRANSFER_ELF,
+        ),
+    ] {
+        let user_elf = risc0_binfmt::ProgramBinary::decode(binary)
+            .unwrap()
+            .user_elf;
+        assert!(!has_symbol_table(user_elf), "{guest} has a symbol table");
+    }
 }
 
 #[test]
@@ -287,12 +317,27 @@ fn migration_proves_balances_and_its_resource_unwraps() {
         EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
         unwrap.layout().unwrap().root().as_bytes(),
     );
-    verify(
-        &unwrap
-            .action(auth_sig, compliance_params())
-            .unwrap()
-            .prove(ProofType::Succinct)
+    let unwrap_tx = unwrap
+        .action(auth_sig, compliance_params())
+        .unwrap()
+        .prove(ProofType::Succinct)
+        .unwrap();
+    verify(&unwrap_tx);
+
+    // The released resource commits the forwarder's unwrap of its quantity to
+    // the recipient, as the forwarder's client encodes it.
+    let released = &unwrap_tx.actions.as_ref().unwrap()[0].logic_verifier_inputs[1];
+    assert_eq!(released.app_data.external_payload.len(), 1);
+    assert_eq!(
+        SolanaExternalCall::decode(words_to_bytes(&released.app_data.external_payload[0].blob))
             .unwrap(),
+        SolanaExternalCall {
+            program_id: FORWARDER_PROGRAM_ID,
+            instruction_data: encode_unwrap_forwarder_input(&SPL_TOKEN_MINT, 1000, &RECIPIENT),
+            expected_output: vec![],
+            output_mode: OutputMode::ReturnData,
+            num_accounts: FORWARDER_UNWRAP_NUM_ACCOUNTS,
+        }
     );
 }
 

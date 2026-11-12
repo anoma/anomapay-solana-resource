@@ -19,3 +19,10 @@ borsh = ">=1.5, <1.6"
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.5-risczero.0" }
 k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
+
+# The guest carries no symbol table: its size sets the section header offset
+# in the ELF header, which the first loaded segment maps, so symbol names
+# (their `.llvm.<hash>` suffixes change with any source edit) would reach the
+# image ID.
+[profile.release]
+strip = "symbols"

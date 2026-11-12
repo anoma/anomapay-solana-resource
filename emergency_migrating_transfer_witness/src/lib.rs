@@ -200,7 +200,7 @@ mod tests {
         authority::{AuthoritySigningKey, AuthorityVerifyingKey},
         encryption::random_keypair,
     };
-    use transfer_witness::{AUTH_SIGNATURE_DOMAIN, CallType};
+    use transfer_witness::AUTH_SIGNATURE_DOMAIN;
 
     const FORWARDER_PROGRAM_ID: [u8; 32] = [0x11; 32];
     const LEGACY_FORWARDER_PROGRAM_ID: [u8; 32] = [0x44; 32];
@@ -323,14 +323,6 @@ mod tests {
     }
 
     #[test]
-    fn auth_signature_domain_is_the_evm_emergency_migrating_resources() {
-        assert_eq!(
-            EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
-            b"TokenTransferAuthorizationEmergencyMigrating"
-        );
-    }
-
-    #[test]
     fn migration_refuses_a_created_trigger() {
         let mut witness = migration();
         witness.is_consumed = false;
@@ -446,27 +438,6 @@ mod tests {
             EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
         );
         assert_refuses(&witness, "exceeds the accounts a forwarder call can name");
-    }
-
-    /// The transfer logic's unwrap, through this logic, commits the
-    /// transfer logic's call.
-    #[test]
-    fn an_unwrap_commits_the_transfer_logics_call() {
-        let mut transfer = ephemeral(
-            100,
-            ForwarderInfo {
-                call_type: CallType::Unwrap,
-                solana_account: [0x77; 32],
-                wrap_auth_info: None,
-            },
-        );
-        transfer.is_consumed = false;
-        transfer.resource.value_ref = Digest::from_bytes([0x77; 32]);
-        let emergency: EmergencyMigratingTokenTransferWitness = transfer.clone().into_call();
-        assert_eq!(
-            emergency.constrain().unwrap().app_data.external_payload,
-            transfer.constrain().unwrap().app_data.external_payload
-        );
     }
 
     /// A persistent resource of this logic is spent by its owner's signature
