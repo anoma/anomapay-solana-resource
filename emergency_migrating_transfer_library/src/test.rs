@@ -17,8 +17,8 @@ use anoma_rm_risc0_gadgets::{
     encryption::random_keypair,
 };
 use anomapay_spl_token_forwarder_client::{
-    MigrateEntry as ForwarderMigrateEntry, MigrateInput, encode_migrate_forwarder_input,
-    forwarder_migrate_num_accounts,
+    FORWARDER_UNWRAP_NUM_ACCOUNTS, MigrateEntry as ForwarderMigrateEntry, MigrateInput,
+    encode_migrate_forwarder_input, encode_unwrap_forwarder_input, forwarder_migrate_num_accounts,
     generated::emergency_migrating_spl_token_forwarder::constants::OP_MIGRATE,
 };
 use emergency_migrating_transfer_witness::{
@@ -287,12 +287,27 @@ fn migration_proves_balances_and_its_resource_unwraps() {
         EMERGENCY_MIGRATING_AUTH_SIGNATURE_DOMAIN,
         unwrap.layout().unwrap().root().as_bytes(),
     );
-    verify(
-        &unwrap
-            .action(auth_sig, compliance_params())
-            .unwrap()
-            .prove(ProofType::Succinct)
+    let unwrap_tx = unwrap
+        .action(auth_sig, compliance_params())
+        .unwrap()
+        .prove(ProofType::Succinct)
+        .unwrap();
+    verify(&unwrap_tx);
+
+    // The released resource commits the forwarder's unwrap of its quantity to
+    // the recipient, as the forwarder's client encodes it.
+    let released = &unwrap_tx.actions.as_ref().unwrap()[0].logic_verifier_inputs[1];
+    assert_eq!(released.app_data.external_payload.len(), 1);
+    assert_eq!(
+        SolanaExternalCall::decode(words_to_bytes(&released.app_data.external_payload[0].blob))
             .unwrap(),
+        SolanaExternalCall {
+            program_id: FORWARDER_PROGRAM_ID,
+            instruction_data: encode_unwrap_forwarder_input(&SPL_TOKEN_MINT, 1000, &RECIPIENT),
+            expected_output: vec![],
+            output_mode: OutputMode::ReturnData,
+            num_accounts: FORWARDER_UNWRAP_NUM_ACCOUNTS,
+        }
     );
 }
 
