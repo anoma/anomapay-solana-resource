@@ -35,9 +35,9 @@ cargo risczero build --manifest-path emergency_migrating_transfer_circuit/Cargo.
 
 This compiles the guest inside the pinned `risczero/risc0-guest-builder` image,
 which fixes the toolchain and normalizes all source paths. The image ID it
-prints is the VK; the ELF it writes is what its library embeds. The
-`cargo-risczero` that runs the build must be able to build edition-2024 crates
-(3.0.5 is known to; the builder image is `r0.1.88.0`).
+prints is the VK; the ELF it writes is what its library embeds. The build
+uses `cargo-risczero` 3.1.0, the release of the guests' `risc0-zkvm`, whose
+builder image is `r0.1.97.0`, as arm-risc0 builds its guests.
 
 CI rebuilds each guest the same way and fails if the ELF differs from the
 embedded one, and a unit test in each library checks that its VK is the image

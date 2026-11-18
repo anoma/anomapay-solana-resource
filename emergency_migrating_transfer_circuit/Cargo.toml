@@ -7,7 +7,7 @@ version = "1.0.0"
 
 [dependencies]
 emergency_migrating_transfer_witness = { path = "../emergency_migrating_transfer_witness" }
-risc0-zkvm = { version = "=3.0.3", features = [
+risc0-zkvm = { version = "=3.1.0", features = [
   "std",
   "unstable",
 ], default-features = false }
