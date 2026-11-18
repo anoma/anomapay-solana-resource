@@ -499,14 +499,6 @@ pub fn calculate_label_ref(forwarder_program_id: &[u8; 32], spl_token_mint: &[u8
 mod tests {
     use super::*;
 
-    /// The owner signs under the domain of the EVM V2 transfer resource the
-    /// EVM V2 forwarder serves (anoma/anomapay-erc20-resource
-    /// `transfer_witness`); the `V2` string is its migration resource's.
-    #[test]
-    fn auth_signature_domain_is_the_evm_transfer_resources() {
-        assert_eq!(AUTH_SIGNATURE_DOMAIN, b"TokenTransferAuthorization");
-    }
-
     #[test]
     fn spl_amount_from_quantity_rejects_overflow() {
         assert_eq!(

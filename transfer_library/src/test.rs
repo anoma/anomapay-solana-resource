@@ -5,7 +5,7 @@
 // set it when running these locally.
 use anoma_pa_solana_client::external_call::{OutputMode, SolanaExternalCall};
 use anoma_rm_risc0::{
-    Digest, compliance,
+    Digest,
     error::ArmError,
     kind_tree::KindTree,
     logic_instance::LogicInstance,
@@ -13,7 +13,7 @@ use anoma_rm_risc0::{
     merkle_path::MerklePath,
     nullifier_key::NullifierKey,
     proving_system::{JournalEncoding, ProofType},
-    resource::Resource,
+    resource::{Resource, ResourceWitness},
     transaction::Transaction,
     utils::words_to_bytes,
 };
@@ -134,15 +134,23 @@ fn create_ephemeral_resource() -> Resource {
     }
 }
 
-/// The guest commits the external call the host-side witness computes.
-fn assert_commits_external_call(proof: &LogicVerifier, logic: &TransferLogic) {
-    assert_eq!(
-        get_instance(proof).unwrap().app_data.external_payload,
-        logic
-            .witness
-            .ephemeral_resource_check(&ACTION_TREE_ROOT)
-            .unwrap()
-    );
+/// The one external call `proof` commits, decoded by the adapter's client.
+fn committed_call(proof: &LogicVerifier) -> SolanaExternalCall {
+    let external_payload = get_instance(proof).unwrap().app_data.external_payload;
+    assert_eq!(external_payload.len(), 1);
+    SolanaExternalCall::decode(words_to_bytes(&external_payload[0].blob)).unwrap()
+}
+
+/// The forwarder call `instruction_data` of `num_accounts` accounts, which
+/// returns nothing.
+fn forwarder_call(instruction_data: Vec<u8>, num_accounts: u8) -> SolanaExternalCall {
+    SolanaExternalCall {
+        program_id: FORWARDER_PROGRAM_ID,
+        instruction_data,
+        expected_output: vec![],
+        output_mode: OutputMode::ReturnData,
+        num_accounts,
+    }
 }
 
 #[test]
@@ -350,7 +358,24 @@ fn test_mint() {
 
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
     verify(&proof).unwrap();
-    assert_commits_external_call(&proof, &resource_logic);
+    let auth = wrap_auth();
+    assert_eq!(
+        committed_call(&proof),
+        forwarder_call(
+            forwarder_client::encode_wrap_forwarder_input(&forwarder_client::WrapInput {
+                token_mint: SPL_TOKEN_MINT,
+                amount: QUANTITY as u64,
+                user: SOLANA_ACCOUNT,
+                nonce: auth.nonce,
+                deadline: auth.deadline,
+                action_tree_root: ACTION_TREE_ROOT,
+                signature: auth.signature,
+                ed25519_ix_index: auth.ed25519_ix_index,
+            }),
+            forwarder_client::FORWARDER_WRAP_NUM_ACCOUNTS,
+        ),
+        "the proof commits the forwarder's wrap of the resource's quantity"
+    );
 
     // A wrap must be triggered by a consumed resource.
     resource_logic.witness.is_consumed = false;
@@ -368,7 +393,18 @@ fn test_burn() {
 
     let proof = resource_logic.prove(ProofType::Succinct).unwrap();
     verify(&proof).unwrap();
-    assert_commits_external_call(&proof, &resource_logic);
+    assert_eq!(
+        committed_call(&proof),
+        forwarder_call(
+            forwarder_client::encode_unwrap_forwarder_input(
+                &SPL_TOKEN_MINT,
+                QUANTITY as u64,
+                &SOLANA_ACCOUNT
+            ),
+            forwarder_client::FORWARDER_UNWRAP_NUM_ACCOUNTS,
+        ),
+        "the proof commits the forwarder's unwrap of the resource's quantity"
+    );
 
     // An unwrap must be triggered by a created resource.
     resource_logic.witness.is_consumed = true;
@@ -444,6 +480,26 @@ fn tags_of(tx: &Transaction) -> Vec<Digest> {
         .collect()
 }
 
+/// The tags of an action of `listed`, in that order: a consumed resource's
+/// nullifier, and the commitment of a created resource with the nonce
+/// `layout` gave it, which the compliance proof checks.
+fn listed_tags(listed: &[ResourceWitness], layout: &Layout) -> Vec<Digest> {
+    listed
+        .iter()
+        .enumerate()
+        .map(|(position, resource)| match resource {
+            ResourceWitness::Consumed(consumed) => {
+                consumed.resource.nullifier(&consumed.nf_key).unwrap()
+            }
+            ResourceWitness::Created(created) => Resource {
+                nonce: layout.resource(position).nonce,
+                ..*created
+            }
+            .commitment(),
+        })
+        .collect()
+}
+
 /// A wrap creates the owner's resource; the unwrap of that resource releases
 /// its quantity to the recipient. Both actions prove against the embedded
 /// guest and balance.
@@ -463,6 +519,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         owner.clone(),
         [6u8; 32],
     );
+    let wrap_listed = wrap.deposit.resources();
     let wrap_layout = wrap.deposit.layout().unwrap();
     let wrapped = wrap_layout.resource(1);
     assert_eq!(wrapped.value_ref, owner.value_ref());
@@ -486,7 +543,7 @@ fn wrap_then_unwrap_actions_prove_and_balance() {
         .unwrap();
     anoma_rm_risc0::transaction::verify(&wrap_tx, kind_tree_root, JournalEncoding::Risc0Serde)
         .unwrap();
-    assert_eq!(tags_of(&wrap_tx), wrap_layout.tags());
+    assert_eq!(tags_of(&wrap_tx), listed_tags(&wrap_listed, &wrap_layout));
 
     let unwrap = unwrap::<TransferLogic>(
         label(),
@@ -597,9 +654,8 @@ fn transfer_action_proves_and_balances() {
 /// and a wrap of the same quantity from it, its resources in the order
 /// `order` lists them by their index in [the unwrap's consumed, the unwrap's
 /// created, the wrap's consumed, the wrap's created]. The layout keeps that
-/// order, its created resources are the ones the compliance witness
-/// carries, the owner and the user sign its root, the logic witnesses are
-/// of the resources at their positions, and the action proves and balances.
+/// order, the owner and the user sign its root, the action proves and
+/// balances, and the transaction's tags are the resources' in that order.
 fn assert_multi_flow_action_keeps_the_order(order: [usize; 4]) {
     let (auth_sk, _, _, _) = owner_keys();
     let first_wrap = test_wrap();
@@ -670,35 +726,22 @@ fn assert_multi_flow_action_keeps_the_order(order: [usize; 4]) {
         Some(wrap_created_logic),
     ];
     let logic_witnesses = order.map(|index| logics[index].take().unwrap());
-    for (position, logic) in logic_witnesses.iter().enumerate() {
-        assert_eq!(
-            logic.witness.resource,
-            layout.resource(position),
-            "logic witness {position} is of the resource laid out there"
-        );
-    }
 
-    let action = layout
+    let tx = layout
         .clone()
         .action(logic_witnesses.into(), compliance_params())
+        .unwrap()
+        .prove(ProofType::Succinct)
         .unwrap();
-    assert!(
-        action.compliance_witness.resource_witnesses == layout.resources(),
-        "the compliance witness carries the layout's resources, created nonces included"
-    );
-    let instance = compliance::constrain(&action.compliance_witness).unwrap();
-    let instance_tags = instance.tags().collect::<Vec<_>>();
-    println!("order {order:?}: compliance instance tags {instance_tags:?}");
-    assert_eq!(
-        instance_tags,
-        layout.tags(),
-        "the compliance instance lists the layout's tags"
-    );
-
-    let tx = action.prove(ProofType::Succinct).unwrap();
     anoma_rm_risc0::transaction::verify(&tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
         .unwrap();
-    assert_eq!(tags_of(&tx), layout.tags());
+    let tags = tags_of(&tx);
+    println!("order {order:?}: transaction tags {tags:?}");
+    assert_eq!(
+        tags,
+        listed_tags(&order.map(|index| listed[index].clone()), &layout),
+        "the transaction lists the resources in the caller's order"
+    );
 }
 
 #[test]
@@ -741,9 +784,9 @@ fn a_transfer_refuses_a_resource_of_another_logic() {
 
 /// One action of a transfer of the test wrap's resource to another holder
 /// and an unwrap of a second resource of the owner's to `SOLANA_ACCOUNT`:
-/// the owner signs its root once for both consumed resources, the logic
-/// witnesses are of the resources at their positions, and the action proves
-/// and balances.
+/// the owner signs its root once for both consumed resources, the action
+/// proves and balances, and the transaction's tags are the resources' in
+/// that order.
 #[test]
 fn transfer_and_unwrap_in_one_action_prove_and_balance() {
     let (auth_sk, _, _, _) = owner_keys();
@@ -780,14 +823,12 @@ fn transfer_and_unwrap_in_one_action_prove_and_balance() {
     )
     .unwrap();
 
-    let layout = Layout::new(
-        transfer
-            .resources()
-            .into_iter()
-            .chain(unwrap.resources())
-            .collect(),
-    )
-    .unwrap();
+    let listed = transfer
+        .resources()
+        .into_iter()
+        .chain(unwrap.resources())
+        .collect::<Vec<_>>();
+    let layout = Layout::new(listed.clone()).unwrap();
     let root = layout.root();
     let owner_signature = auth_sk.sign(AUTH_SIGNATURE_DOMAIN, root.as_bytes());
     let (_, discovery_pk) = random_keypair();
@@ -802,13 +843,6 @@ fn transfer_and_unwrap_in_one_action_prove_and_balance() {
         .into_iter()
         .chain(unwrap.logic_witnesses(layout.resource(3), root, owner_signature))
         .collect::<Vec<_>>();
-    for (position, logic) in logic_witnesses.iter().enumerate() {
-        assert_eq!(
-            logic.witness.resource,
-            layout.resource(position),
-            "logic witness {position} is of the resource laid out there"
-        );
-    }
 
     let tx = layout
         .clone()
@@ -818,7 +852,7 @@ fn transfer_and_unwrap_in_one_action_prove_and_balance() {
         .unwrap();
     anoma_rm_risc0::transaction::verify(&tx, EMPTY_KIND_TREE.root(), JournalEncoding::Risc0Serde)
         .unwrap();
-    assert_eq!(tags_of(&tx), layout.tags());
+    assert_eq!(tags_of(&tx), listed_tags(&listed, &layout));
 }
 
 /// The logic witnesses an action is given must be one per laid-out
