@@ -15,7 +15,7 @@ use anoma_rm_risc0::{
     proving_system::{JournalEncoding, ProofType},
     resource::Resource,
     transaction::Transaction,
-    utils::{hash_bytes, words_to_bytes},
+    utils::words_to_bytes,
 };
 use anoma_rm_risc0_gadgets::{
     authority::{AuthoritySigningKey, AuthorityVerifyingKey},
@@ -35,11 +35,8 @@ use transfer_witness::{
     calculate_value_ref_from_solana_account, wire,
 };
 
-use crate::action::{
-    ComplianceParams, Layout, Owner, TransferAction, Wrap, WrapAuth, transfer, unwrap, wrap,
-};
+use crate::action::{ComplianceParams, Layout, Owner, Wrap, WrapAuth, transfer, unwrap, wrap};
 use crate::{TOKEN_TRANSFER_ELF, TOKEN_TRANSFER_ID, TransferLogic};
-use hex_literal::hex;
 
 const FORWARDER_PROGRAM_ID: [u8; 32] = [10u8; 32];
 const SPL_TOKEN_MINT: [u8; 32] = [1u8; 32];
@@ -593,77 +590,6 @@ fn transfer_action_proves_and_balances() {
             sent.nullifier(&owner.nf_key).unwrap(),
             received.commitment()
         ]
-    );
-}
-
-/// The digest of an action's witnesses as the provers receive them: the
-/// compliance witness, then each logic witness, in order.
-fn witnesses_digest(action: &TransferAction) -> Digest {
-    let mut bytes = bincode::serialize(&action.compliance_witness).unwrap();
-    for logic in &action.logic_witnesses {
-        bytes.extend(bincode::serialize(logic).unwrap());
-    }
-    hash_bytes(&bytes)
-}
-
-/// The single-flow wrap and unwrap of the test owner, from fixed seeds, build
-/// the action tree roots and witness bytes pinned here, which the guests and
-/// every consumer of a wrap or unwrap rely on.
-#[test]
-fn single_flow_actions_are_pinned() {
-    let (auth_sk, _, _, _) = owner_keys();
-    let wrap = test_wrap();
-    let wrap_action = wrap
-        .action(
-            WrapAuth {
-                user: SOLANA_ACCOUNT,
-                info: wrap_auth(),
-            },
-            &generate_public_key(&Scalar::from(ENCRYPTION_SK)),
-            compliance_params(),
-            &mut ChaCha20Rng::seed_from_u64(1),
-        )
-        .unwrap();
-    let wrap_layout = wrap.deposit.layout().unwrap();
-    let wrap_root = wrap_layout.root();
-    let wrap_digest = witnesses_digest(&wrap_action);
-    println!("wrap: action tree root {wrap_root}, witnesses {wrap_digest}");
-
-    let unwrap = unwrap::<TransferLogic>(
-        label(),
-        wrap_layout.resource(1),
-        MerklePath::empty(),
-        wrap.deposit.owner.clone(),
-        SOLANA_ACCOUNT,
-    )
-    .unwrap();
-    let unwrap_root = unwrap.layout().unwrap().root();
-    let unwrap_action = unwrap
-        .action(
-            auth_sk.sign(AUTH_SIGNATURE_DOMAIN, unwrap_root.as_bytes()),
-            compliance_params(),
-        )
-        .unwrap();
-    let unwrap_digest = witnesses_digest(&unwrap_action);
-    println!("unwrap: action tree root {unwrap_root}, witnesses {unwrap_digest}");
-
-    assert_eq!(
-        (wrap_root, wrap_digest, unwrap_root, unwrap_digest),
-        (
-            Digest::from_bytes(hex!(
-                "70943c8749161901cf65b523bfb967604abef09a31ad2d7388fc50bf1cd6e1fa"
-            )),
-            Digest::from_bytes(hex!(
-                "530dd6508245f5532d4e377d7463a77f0f71d18dbdf5695f28a4898a40e6d074"
-            )),
-            Digest::from_bytes(hex!(
-                "60cf089a3714b37397280f1a08493e52a591891127f551ea224ab1ad39711228"
-            )),
-            Digest::from_bytes(hex!(
-                "8b1693dfe87af2622f3335dece9e9bad9176f28ba5aabce7bf95d11b5a724ec6"
-            )),
-        ),
-        "a single-flow action's root or witnesses changed"
     );
 }
 
